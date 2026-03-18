@@ -125,12 +125,18 @@ def step_wget(url: str, project_dir: Path, debug: bool) -> bool:
         "--mirror",
         "--convert-links",
         "--adjust-extension",
-        "--page-requisites",
         "--no-parent",
         "--wait=1",
         "--random-wait",
         "-e", "robots=off",
         "--no-check-certificate",
+        # Solo descargar HTML, JS y JSON — rechazar imagenes, CSS, fuentes, video, etc.
+        "--reject", "*.png,*.jpg,*.jpeg,*.gif,*.svg,*.ico,*.webp,*.bmp,*.tiff,"
+                    "*.css,*.woff,*.woff2,*.ttf,*.eot,*.otf,"
+                    "*.mp4,*.mp3,*.avi,*.mov,*.wmv,*.flv,*.webm,*.ogg,"
+                    "*.pdf,*.zip,*.tar,*.gz,*.rar,*.7z,"
+                    "*.map",
+        "--accept", "*.html,*.htm,*.js,*.json,*.xml,*.mjs,*.cjs,*.jsx,*.ts,*.tsx",
         "-U", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "-P", str(site_dir),
         url,
