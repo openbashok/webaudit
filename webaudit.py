@@ -25,39 +25,43 @@ import yaml
 # --- Prompt para el audit (paso 3) -------------------------------------------
 
 AUDIT_PROMPT = """\
-Auditoria de codigo fuente del sitio: {url}
+Source code audit for site: {url}
 
-El sitio ya fue descargado en ./site/ y CLAUDE.md tiene el contexto del codigo.
+The site is already downloaded in ./site/ and CLAUDE.md has the code context.
 
-INSTRUCCIONES — segui los pasos del system prompt en orden:
+LANGUAGE: Write ALL report content (JSON fields and markdown) in {lang_name}.
+Field names in the JSON stay in English, but all values (descriptions, titles,
+recommendations, executive summary, etc.) MUST be written in {lang_name}.
 
-1. Lee CLAUDE.md para entender la estructura.
-2. Usa Glob para listar todos los .js y .html en ./site/
-3. Clasifica cada JS como PROPIO o LIBRERIA.
-4. Lee CADA archivo JS propio completo con Read — linea por linea.
-5. Usa Grep para buscar patrones de vulnerabilidad (claves hardcodeadas, innerHTML, eval, localStorage, fetch, postMessage, etc.)
-6. Para librerias con version, busca CVEs con WebSearch y verifica si las funciones afectadas se usan.
-7. Verifica cada hallazgo potencial — vuelve a leer el contexto antes de confirmar.
-8. Para CADA hallazgo, genera un PoC JavaScript funcional en el campo "console_instrumentation".
-9. Genera la suite completa en el campo "console_instrumentation" de la raiz del JSON.
-10. Guarda webaudit_report.json con Write.
+INSTRUCTIONS — follow the system prompt steps in order:
 
-CRITICO: Esto es analisis ESTATICO DE CODIGO FUENTE, no un pentest de red.
-Tu trabajo es LEER el codigo JavaScript y encontrar vulnerabilidades EN EL CODIGO.
-No revises headers HTTP ni hagas pruebas de red. Lee archivos, busca patrones, analiza flujos de datos.
+1. Read CLAUDE.md to understand the structure.
+2. Use Glob to list all .js and .html in ./site/
+3. Classify each JS as APPLICATION or LIBRARY.
+4. Read EACH application JS file completely with Read — line by line.
+5. Use Grep to search for vulnerability patterns (hardcoded keys, innerHTML, eval, localStorage, fetch, postMessage, etc.)
+6. For libraries with detected versions, search CVEs with WebSearch and verify if affected functions are used.
+7. Verify each potential finding — re-read the context before confirming.
+8. For EACH finding, generate a functional JavaScript PoC in the "console_instrumentation" field.
+9. Generate the complete suite in the root "console_instrumentation" field.
+10. Save webaudit_report.json with Write.
 
-OBLIGATORIO — CONSOLE_INSTRUMENTATION:
-Cada hallazgo DEBE tener un campo "console_instrumentation" con codigo JavaScript
-funcional que se pueda copiar y pegar en la consola del navegador para demostrar
-la vulnerabilidad. No dejes este campo vacio ni lo omitas. El PoC debe:
-- Ser autocontenido (copiar-pegar en DevTools > Console)
-- Mostrar evidencia visible (console.log, alert, o UI modificada)
-- Tener comentarios explicando que hace y que demuestra
-- Ejemplo minimo: (function(){{ console.log('[PoC] Token encontrado:', localStorage.getItem('token')); }})();
+CRITICAL: This is STATIC SOURCE CODE ANALYSIS, not a network pentest.
+Your job is to READ JavaScript code and find vulnerabilities IN THE CODE.
+Do not check HTTP headers or run network tests. Read files, search patterns, analyze data flows.
 
-Ademas, el campo "console_instrumentation" en la RAIZ del JSON debe contener una
-SUITE COMPLETA: un unico bloque JS que al pegarlo en la consola cree un panel
-flotante en la pagina con botones para ejecutar cada PoC individualmente.
+MANDATORY — CONSOLE_INSTRUMENTATION:
+Every finding MUST have a "console_instrumentation" field with functional JavaScript
+code that can be copied and pasted into the browser console to demonstrate the
+vulnerability. Do not leave this field empty or omit it. The PoC must:
+- Be self-contained (copy-paste into DevTools > Console)
+- Show visible evidence (console.log, alert, or modified UI)
+- Have comments explaining what it does and what it demonstrates
+- Minimum example: (function(){{ console.log('[PoC] Token found:', localStorage.getItem('token')); }})();
+
+Also, the "console_instrumentation" field at the JSON ROOT must contain a
+COMPLETE SUITE: a single JS block that when pasted in the console creates a
+floating panel on the page with buttons to execute each PoC individually.
 """
 
 # --- Configuracion -----------------------------------------------------------
@@ -73,6 +77,12 @@ DEFAULTS = {
     "default_budget_usd": 5.0,
     "default_max_turns": 50,
     "work_dir": str(Path.home() / "webaudit"),
+    "default_lang": "en",
+}
+
+LANG_NAMES = {
+    "en": "English",
+    "es": "Spanish (Español)",
 }
 
 
@@ -357,12 +367,12 @@ def step_init(project_dir: Path, debug: bool) -> bool:
 # --- PASO 3: claude -p audit (CLI real, no SDK) -------------------------------
 
 def step_audit(url: str, model: str, budget: float, max_turns: int,
-               project_dir: Path, debug: bool) -> bool:
+               project_dir: Path, debug: bool, lang: str = "en") -> bool:
     """Ejecuta el analisis de seguridad usando claude CLI real (no SDK)."""
     print()
     print("=" * 60)
-    print("[PASO 3/3] Analisis de seguridad con Claude Code")
-    print(f"[audit] Modelo: {model} | Budget: ${budget:.2f}")
+    print("[STEP 3/3] Security analysis with Claude Code")
+    print(f"[audit] Model: {model} | Budget: ${budget:.2f}")
     print("=" * 60)
 
     claude_bin = shutil.which("claude")
@@ -380,7 +390,8 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
     dbg(f"System prompt: {len(system_prompt)} chars desde {agent_prompt_path}", debug)
 
     # Armar el prompt del usuario
-    user_prompt = AUDIT_PROMPT.format(url=url)
+    lang_name = LANG_NAMES.get(lang, "English")
+    user_prompt = AUDIT_PROMPT.format(url=url, lang_name=lang_name)
 
     # Comando claude con system prompt, modelo, budget
     claude_cmd = [
@@ -451,33 +462,120 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
     # --- Generar reporte Markdown (siempre desde JSON, no del agente) ---
     if report_data:
         md_path = project_dir / "webaudit_report.md"
-        md_content = _generate_markdown_report(report_data)
+        md_content = _generate_markdown_report(report_data, lang)
         md_path.write_text(md_content, encoding="utf-8")
-        print(f"[audit] OK: Informe Markdown generado ({md_path.stat().st_size:,} bytes)")
+        print(f"[audit] OK: Markdown report generated ({md_path.stat().st_size:,} bytes)")
 
     return True
 
 
-def _generate_markdown_report(data: dict) -> str:
+# --- Labels por idioma para el Markdown generado ---
+
+MD_LABELS = {
+    "en": {
+        "title": "Frontend Security Diagnostic",
+        "target": "Target",
+        "date": "Date",
+        "type": "Type",
+        "scope": "Scope",
+        "stats": "Statistics",
+        "metric": "Metric",
+        "value": "Value",
+        "executive_summary": "Executive Summary",
+        "findings_table": "Findings Classification",
+        "finding": "Finding",
+        "severity": "Severity",
+        "description": "Description",
+        "impact": "Impact",
+        "evidence": "Evidence",
+        "file": "File",
+        "line": "line",
+        "context": "Context",
+        "reproduction_steps": "Reproduction Steps",
+        "poc": "Proof of Concept (PoC)",
+        "poc_instructions": "Copy and paste in the browser console:",
+        "recommendations": "Recommendations",
+        "appendix_libs": "Appendix A: Library Inventory",
+        "lib_name": "Library",
+        "version": "Version",
+        "cves": "CVEs",
+        "in_use": "In Use",
+        "note": "Note",
+        "yes": "Yes",
+        "no": "No",
+        "appendix_suite": "Appendix B: Instrumentation Suite",
+        "suite_instructions": "Complete PoC suite — copy and paste in the browser console:",
+        "appendix_files": "Appendix C: Analyzed Files",
+        "file_col": "File",
+        "type_col": "Type",
+        "lines_col": "Lines",
+        "desc_col": "Description",
+        "generated_by": "Generated by",
+    },
+    "es": {
+        "title": "Diagnostico de Seguridad Frontend",
+        "target": "Objetivo",
+        "date": "Fecha",
+        "type": "Tipo",
+        "scope": "Alcance",
+        "stats": "Estadisticas",
+        "metric": "Metrica",
+        "value": "Valor",
+        "executive_summary": "Resumen Ejecutivo",
+        "findings_table": "Clasificacion de Hallazgos",
+        "finding": "Hallazgo",
+        "severity": "Severidad",
+        "description": "Descripcion",
+        "impact": "Impacto",
+        "evidence": "Evidencia",
+        "file": "Archivo",
+        "line": "linea",
+        "context": "Contexto",
+        "reproduction_steps": "Pasos de Reproduccion",
+        "poc": "Prueba de Concepto (PoC)",
+        "poc_instructions": "Copiar y pegar en la consola del navegador:",
+        "recommendations": "Recomendaciones",
+        "appendix_libs": "Apendice A: Inventario de Librerias",
+        "lib_name": "Libreria",
+        "version": "Version",
+        "cves": "CVEs",
+        "in_use": "En uso",
+        "note": "Nota",
+        "yes": "Si",
+        "no": "No",
+        "appendix_suite": "Apendice B: Suite de Instrumentacion",
+        "suite_instructions": "Suite completa de PoCs — copiar y pegar en la consola del navegador:",
+        "appendix_files": "Apendice C: Archivos Analizados",
+        "file_col": "Archivo",
+        "type_col": "Tipo",
+        "lines_col": "Lineas",
+        "desc_col": "Descripcion",
+        "generated_by": "Generado por",
+    },
+}
+
+
+def _generate_markdown_report(data: dict, lang: str = "en") -> str:
     """Genera un informe Markdown completo desde los datos JSON del reporte."""
+    L = MD_LABELS.get(lang, MD_LABELS["en"])
     lines = []
     url = data.get("url", "?")
     domain = urlparse(url).hostname or url
 
-    lines.append(f"# Diagnostico de Seguridad Frontend — {domain}")
+    lines.append(f"# {L['title']} — {domain}")
     lines.append("")
-    lines.append(f"**Objetivo:** {url}")
-    lines.append(f"**Fecha:** {data.get('fecha', '?')}")
-    lines.append(f"**Tipo:** {data.get('tipo', 'Analisis estatico de codigo frontend')}")
-    lines.append(f"**Alcance:** {data.get('alcance', 'Codigo descargado del sitio')}")
+    lines.append(f"**{L['target']}:** {url}")
+    lines.append(f"**{L['date']}:** {data.get('fecha', '?')}")
+    lines.append(f"**{L['type']}:** {data.get('tipo', '?')}")
+    lines.append(f"**{L['scope']}:** {data.get('alcance', '?')}")
     lines.append("")
 
     # Estadisticas
     stats = data.get("estadisticas", {})
     if stats:
-        lines.append("## Estadisticas")
+        lines.append(f"## {L['stats']}")
         lines.append("")
-        lines.append(f"| Metrica | Valor |")
+        lines.append(f"| {L['metric']} | {L['value']} |")
         lines.append(f"|---------|-------|")
         for k, v in stats.items():
             label = k.replace("_", " ").capitalize()
@@ -487,7 +585,7 @@ def _generate_markdown_report(data: dict) -> str:
     # Resumen ejecutivo
     resumen = data.get("resumen_ejecutivo", "")
     if resumen:
-        lines.append("## Resumen Ejecutivo")
+        lines.append(f"## {L['executive_summary']}")
         lines.append("")
         lines.append(resumen)
         lines.append("")
@@ -495,47 +593,53 @@ def _generate_markdown_report(data: dict) -> str:
     # Tabla de hallazgos
     hallazgos = data.get("hallazgos", [])
     if hallazgos:
-        lines.append("## Clasificacion de Hallazgos")
+        lines.append(f"## {L['findings_table']}")
         lines.append("")
-        lines.append("| # | Hallazgo | Severidad | CVSS | CWE |")
+        lines.append(f"| # | {L['finding']} | {L['severity']} | CVSS | CWE |")
         lines.append("|---|----------|-----------|------|-----|")
         for h in hallazgos:
-            lines.append(f"| {h.get('id', '?')} | {h.get('titulo', '?')} | **{h.get('severidad', '?')}** | {h.get('cvss_v3_1', '?')} | {h.get('cwe', '?')} |")
+            titulo = h.get("titulo", h.get("title", "?"))
+            sev = h.get("severidad", h.get("severity", "?"))
+            lines.append(f"| {h.get('id', '?')} | {titulo} | **{sev}** | {h.get('cvss_v3_1', '?')} | {h.get('cwe', '?')} |")
         lines.append("")
 
         # Detalle de cada hallazgo
         for h in hallazgos:
+            titulo = h.get("titulo", h.get("title", "?"))
+            sev = h.get("severidad", h.get("severity", "?"))
             lines.append(f"---")
             lines.append("")
-            lines.append(f"## Hallazgo {h.get('id', '?')}: {h.get('titulo', '?')}")
+            lines.append(f"## {L['finding']} {h.get('id', '?')}: {titulo}")
             lines.append("")
-            lines.append(f"**Severidad:** {h.get('severidad', '?')}")
+            lines.append(f"**{L['severity']}:** {sev}")
             lines.append(f"**CVSS v3.1:** {h.get('cvss_v3_1', '?')}")
             lines.append(f"**CWE:** {h.get('cwe', '?')}")
             lines.append("")
 
-            if h.get("descripcion"):
-                lines.append("### Descripcion")
+            desc = h.get("descripcion", h.get("description", ""))
+            if desc:
+                lines.append(f"### {L['description']}")
                 lines.append("")
-                lines.append(h["descripcion"])
-                lines.append("")
-
-            if h.get("impacto"):
-                lines.append("### Impacto")
-                lines.append("")
-                lines.append(h["impacto"])
+                lines.append(desc)
                 lines.append("")
 
-            evidencia = h.get("evidencia", {})
+            impacto = h.get("impacto", h.get("impact", ""))
+            if impacto:
+                lines.append(f"### {L['impact']}")
+                lines.append("")
+                lines.append(impacto)
+                lines.append("")
+
+            evidencia = h.get("evidencia", h.get("evidence", {}))
             if evidencia:
-                lines.append("### Evidencia")
+                lines.append(f"### {L['evidence']}")
                 lines.append("")
                 if isinstance(evidencia, dict):
-                    archivo = evidencia.get("archivo", "?")
-                    linea = evidencia.get("linea", "?")
-                    codigo = evidencia.get("codigo", "")
-                    contexto = evidencia.get("contexto", "")
-                    lines.append(f"**Archivo:** `{archivo}` (linea {linea})")
+                    archivo = evidencia.get("archivo", evidencia.get("file", "?"))
+                    linea = evidencia.get("linea", evidencia.get("line", "?"))
+                    codigo = evidencia.get("codigo", evidencia.get("code", ""))
+                    contexto = evidencia.get("contexto", evidencia.get("context", ""))
+                    lines.append(f"**{L['file']}:** `{archivo}` ({L['line']} {linea})")
                     lines.append("")
                     if codigo:
                         lines.append("```javascript")
@@ -543,48 +647,52 @@ def _generate_markdown_report(data: dict) -> str:
                         lines.append("```")
                         lines.append("")
                     if contexto:
-                        lines.append(f"**Contexto:** {contexto}")
+                        lines.append(f"**{L['context']}:** {contexto}")
                         lines.append("")
                 else:
                     lines.append(str(evidencia))
                     lines.append("")
 
-            if h.get("pasos_reproduccion"):
-                lines.append("### Pasos de Reproduccion")
+            pasos = h.get("pasos_reproduccion", h.get("reproduction_steps", ""))
+            if pasos:
+                lines.append(f"### {L['reproduction_steps']}")
                 lines.append("")
-                lines.append(h["pasos_reproduccion"])
+                lines.append(pasos)
                 lines.append("")
 
             if h.get("console_instrumentation"):
-                lines.append("### Prueba de Concepto (PoC)")
+                lines.append(f"### {L['poc']}")
                 lines.append("")
-                lines.append("Copiar y pegar en la consola del navegador:")
+                lines.append(L['poc_instructions'])
                 lines.append("")
                 lines.append("```javascript")
                 lines.append(h["console_instrumentation"])
                 lines.append("```")
                 lines.append("")
 
-            if h.get("recomendaciones"):
-                lines.append("### Recomendaciones")
+            recom = h.get("recomendaciones", h.get("recommendations", ""))
+            if recom:
+                lines.append(f"### {L['recommendations']}")
                 lines.append("")
-                lines.append(h["recomendaciones"])
+                lines.append(recom)
                 lines.append("")
 
     # Librerias
-    librerias = data.get("librerias", [])
+    librerias = data.get("librerias", data.get("libraries", []))
     if librerias:
         lines.append("---")
         lines.append("")
-        lines.append("## Apendice A: Inventario de Librerias")
+        lines.append(f"## {L['appendix_libs']}")
         lines.append("")
-        lines.append("| Libreria | Version | CVEs | En uso | Nota |")
+        lines.append(f"| {L['lib_name']} | {L['version']} | {L['cves']} | {L['in_use']} | {L['note']} |")
         lines.append("|----------|---------|------|--------|------|")
         for lib in librerias:
-            cves = ", ".join(lib.get("cves", [])) or "—"
-            en_uso = "Si" if lib.get("funciones_afectadas_en_uso") else "No"
-            nota = lib.get("nota", "")
-            lines.append(f"| {lib.get('nombre', '?')} | {lib.get('version', '?')} | {cves} | {en_uso} | {nota} |")
+            cves_list = lib.get("cves", [])
+            cves = ", ".join(cves_list) if cves_list else "—"
+            en_uso = L["yes"] if lib.get("funciones_afectadas_en_uso", lib.get("affected_functions_in_use")) else L["no"]
+            nota = lib.get("nota", lib.get("note", ""))
+            nombre = lib.get("nombre", lib.get("name", "?"))
+            lines.append(f"| {nombre} | {lib.get('version', '?')} | {cves} | {en_uso} | {nota} |")
         lines.append("")
 
     # Suite de instrumentacion
@@ -592,9 +700,9 @@ def _generate_markdown_report(data: dict) -> str:
     if suite:
         lines.append("---")
         lines.append("")
-        lines.append("## Apendice B: Suite de Instrumentacion")
+        lines.append(f"## {L['appendix_suite']}")
         lines.append("")
-        lines.append("Suite completa de PoCs — copiar y pegar en la consola del navegador:")
+        lines.append(L['suite_instructions'])
         lines.append("")
         lines.append("```javascript")
         lines.append(suite)
@@ -602,21 +710,25 @@ def _generate_markdown_report(data: dict) -> str:
         lines.append("")
 
     # Archivos analizados
-    archivos = data.get("archivos_analizados", [])
+    archivos = data.get("archivos_analizados", data.get("analyzed_files", []))
     if archivos:
         lines.append("---")
         lines.append("")
-        lines.append("## Apendice C: Archivos Analizados")
+        lines.append(f"## {L['appendix_files']}")
         lines.append("")
-        lines.append("| Archivo | Tipo | Lineas | Descripcion |")
+        lines.append(f"| {L['file_col']} | {L['type_col']} | {L['lines_col']} | {L['desc_col']} |")
         lines.append("|---------|------|--------|-------------|")
         for a in archivos:
-            lines.append(f"| `{a.get('archivo', '?')}` | {a.get('tipo', '?')} | {a.get('lineas', '?')} | {a.get('descripcion', '')} |")
+            archivo = a.get("archivo", a.get("file", "?"))
+            tipo = a.get("tipo", a.get("type", "?"))
+            lineas = a.get("lineas", a.get("lines", "?"))
+            desc = a.get("descripcion", a.get("description", ""))
+            lines.append(f"| `{archivo}` | {tipo} | {lineas} | {desc} |")
         lines.append("")
 
     lines.append("---")
     lines.append("")
-    lines.append("*Generado por [WebAudit](https://github.com/openbashok/webaudit) — Analisis estatico de codigo fuente frontend.*")
+    lines.append(f"*{L['generated_by']} [WebAudit](https://github.com/openbashok/webaudit)*")
     lines.append("")
 
     return "\n".join(lines)
@@ -719,25 +831,27 @@ def run_check(config: dict, debug: bool) -> bool:
 # --- Flujo principal ----------------------------------------------------------
 
 def run_audit(url: str, model: str, budget: float, max_turns: int,
-              project_dir: Path, debug: bool):
+              project_dir: Path, debug: bool, lang: str = "en"):
     """Flujo completo: wget → claude /init → claude audit."""
 
+    lang_name = LANG_NAMES.get(lang, "English")
     print(f"[webaudit] URL: {url}")
-    print(f"[webaudit] Modelo: {model}")
+    print(f"[webaudit] Model: {model}")
     print(f"[webaudit] Budget: ${budget:.2f}")
-    print(f"[webaudit] Proyecto: {project_dir}")
+    print(f"[webaudit] Language: {lang_name}")
+    print(f"[webaudit] Project: {project_dir}")
     print()
 
     # --- PASO 1: wget ---
     if not step_wget(url, project_dir, debug):
-        print("\n[webaudit] ERROR: Descarga fallida. Abortando.")
+        print("\n[webaudit] ERROR: Download failed. Aborting.")
         sys.exit(1)
 
     # --- PASO 2: claude /init ---
     step_init(project_dir, debug)
 
     # --- PASO 3: claude audit ---
-    step_audit(url, model, budget, max_turns, project_dir, debug)
+    step_audit(url, model, budget, max_turns, project_dir, debug, lang)
 
     # --- Resumen ---
     print("\n" + "=" * 60)
@@ -777,9 +891,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("-t", "--max-turns", type=int, help="Maximo de turnos del agente")
     scan.add_argument("-o", "--output-dir", help="Directorio de salida (default: auto)")
     scan.add_argument("-w", "--work-dir", help="Directorio base de trabajo (default: ~/webaudit)")
-    scan.add_argument("-d", "--debug", action="store_true", help="Modo debug: output en tiempo real")
+    scan.add_argument("-l", "--lang", choices=["en", "es"], help="Report language: en (default), es")
+    scan.add_argument("-d", "--debug", action="store_true", help="Debug mode: real-time output")
 
-    check = sub.add_parser("check", help="Verificar salud del sistema")
+    check = sub.add_parser("check", help="System health check")
     check.add_argument("-d", "--debug", action="store_true", help="Modo debug")
 
     return parser
@@ -820,9 +935,10 @@ def main():
     budget = args.budget if args.budget is not None else config["default_budget_usd"]
     max_turns = args.max_turns if args.max_turns is not None else config["default_max_turns"]
     work_dir = args.work_dir or config["work_dir"]
+    lang = args.lang or config.get("default_lang", "en")
     project_dir = resolve_project_dir(work_dir, url, args.output_dir, debug)
 
-    run_audit(url, model, budget, max_turns, project_dir, debug)
+    run_audit(url, model, budget, max_turns, project_dir, debug, lang)
 
 
 if __name__ == "__main__":

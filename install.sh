@@ -102,7 +102,9 @@ anthropic_api_key: "sk-ant-PONE-TU-CLAVE-ACA"
 default_model: "claude-sonnet-4-6"
 default_budget_usd: 5.0
 default_max_turns: 50
-# work_dir: por defecto usa ~/webaudit (del usuario que ejecuta)
+# Report language: "en" (English) or "es" (Spanish)
+default_lang: "en"
+# work_dir: defaults to ~/webaudit
 # work_dir: "/tmp/webaudit"
 YAML
     echo "Archivo de configuracion creado en ${CONFIG_DIR}/config.yaml"
