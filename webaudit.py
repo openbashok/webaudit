@@ -2,10 +2,10 @@
 """
 WebAudit — Agente autonomo de analisis de seguridad frontend.
 
-Flujo de 3 pasos:
-  Paso 1 (wget):   Descarga completa del sitio con wget — sin IA, codigo puro.
-  Paso 2 (init):   Ejecuta 'claude -p /init' en la carpeta descargada — Claude Code real.
-  Paso 3 (audit):  Analisis de seguridad con Agent SDK, usando el CLAUDE.md generado.
+Flujo de 3 pasos (todo via claude CLI real, sin SDK):
+  Paso 1 (wget):   Descarga completa del sitio — codigo Python puro.
+  Paso 2 (init):   claude -p "/init" en la carpeta descargada.
+  Paso 3 (audit):  claude -p con el AGENT_PROMPT.md como system prompt.
 """
 
 import sys
@@ -14,7 +14,6 @@ import json
 import shutil
 import argparse
 import subprocess
-import anyio
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse
@@ -30,27 +29,28 @@ El sitio ya fue descargado y esta en el subdirectorio ./site/
 Ya se ejecuto /init y el archivo CLAUDE.md en este directorio tiene el contexto
 completo del codigo descargado.
 
-Ejecuta las Fases 3, 4 y 5 de tus instrucciones:
+Ejecuta las Fases 3, 4 y 5 del system prompt:
 
 FASE 3 — ANALISIS DE SEGURIDAD:
 Analiza todo el codigo JavaScript buscando vulnerabilidades en todas las categorias
 (cifrado, autenticacion, control de acceso, inyeccion, exposicion de datos,
 dependencias, CSRF, etc.). Para cada hallazgo, documenta archivo, linea, codigo
-vulnerable, y por que es un problema.
+vulnerable, y por que es un problema. Busca CVEs para las librerias con version
+detectada — pero solo reportalos si la funcion vulnerable se usa en el codigo.
 
 FASE 4 — PRUEBAS DE CONCEPTO:
 Para cada hallazgo de severidad Alta o Critica, genera codigo JavaScript inyectable
 desde la consola del navegador. Ademas genera una suite completa que agrupe todos
-los PoCs en un panel interactivo.
+los PoCs en un panel interactivo inyectable.
 
 FASE 5 — INFORME:
-Genera el archivo webaudit_report.json con la estructura JSON definida en tus
-instrucciones. Los campos console_instrumentation (por hallazgo y en la raiz)
-son los mas importantes.
+Genera el archivo webaudit_report.json con la estructura JSON definida en el
+system prompt. Los campos console_instrumentation (por hallazgo y en la raiz)
+son los mas importantes — deben ser JS funcional copiar-y-pegar en consola.
 
 IMPORTANTE:
 - Lee CLAUDE.md primero para entender el sitio.
-- Despues lee los archivos JS/HTML para encontrar vulnerabilidades reales.
+- Despues lee los archivos JS/HTML reales para encontrar vulnerabilidades.
 - No reportes falsos positivos. Verifica que cada vulnerabilidad sea real.
 - Guarda webaudit_report.json en este directorio.
 """
@@ -91,42 +91,6 @@ def dbg(msg: str, debug: bool):
         print(f"[debug] {msg}", file=sys.stderr)
 
 
-# --- Prompt del sistema (para paso 3) ----------------------------------------
-
-def build_system_prompt(project_dir: Path, debug: bool) -> str:
-    """
-    Construye el system prompt para el audit.
-    Combina: CLAUDE.md del repo + CLAUDE.md del sitio (generado por /init) + AGENT_PROMPT.md
-    """
-    parts = []
-    base_dir = Path(__file__).parent
-
-    # CLAUDE.md del repo webaudit (nuestras instrucciones generales)
-    repo_claude = base_dir / "CLAUDE.md"
-    if repo_claude.is_file():
-        dbg(f"Cargando CLAUDE.md del repo: {repo_claude}", debug)
-        parts.append(f"# Instrucciones del proyecto WebAudit\n\n{repo_claude.read_text(encoding='utf-8')}")
-
-    # CLAUDE.md del sitio descargado (generado por claude /init en paso 2)
-    site_claude = project_dir / "CLAUDE.md"
-    if site_claude.is_file():
-        content = site_claude.read_text(encoding="utf-8")
-        dbg(f"Cargando CLAUDE.md del sitio: {site_claude} ({len(content)} chars)", debug)
-        parts.append(f"# Contexto del sitio analizado (generado por /init)\n\n{content}")
-    else:
-        dbg("WARN: No se encontro CLAUDE.md del sitio (paso 2 no genero /init)", debug)
-
-    # AGENT_PROMPT.md (instrucciones del agente de seguridad)
-    prompt_path = base_dir / "AGENT_PROMPT.md"
-    if not prompt_path.is_file():
-        print(f"Error: no se encontro {prompt_path}", file=sys.stderr)
-        sys.exit(1)
-    dbg(f"Cargando AGENT_PROMPT.md: {prompt_path}", debug)
-    parts.append(prompt_path.read_text(encoding="utf-8"))
-
-    return "\n\n---\n\n".join(parts)
-
-
 # --- Directorio de proyecto ---------------------------------------------------
 
 def resolve_project_dir(base_work_dir: str, url: str, output_dir: str | None, debug: bool) -> Path:
@@ -150,7 +114,6 @@ def step_wget(url: str, project_dir: Path, debug: bool) -> bool:
     print("[PASO 1/3] Descarga del sitio con wget")
     print("=" * 60)
 
-    # Normalizar URL
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
 
@@ -159,17 +122,17 @@ def step_wget(url: str, project_dir: Path, debug: bool) -> bool:
 
     wget_cmd = [
         "wget",
-        "--mirror",                    # descarga recursiva completa
-        "--convert-links",             # convierte links para navegacion local
-        "--adjust-extension",          # agrega .html a archivos sin extension
-        "--page-requisites",           # descarga CSS, JS, imagenes
-        "--no-parent",                 # no subir al directorio padre
-        "--wait=1",                    # esperar 1 segundo entre requests
-        "--random-wait",               # aleatorizar la espera
-        "-e", "robots=off",           # ignorar robots.txt
-        "--no-check-certificate",      # no verificar certificados SSL
+        "--mirror",
+        "--convert-links",
+        "--adjust-extension",
+        "--page-requisites",
+        "--no-parent",
+        "--wait=1",
+        "--random-wait",
+        "-e", "robots=off",
+        "--no-check-certificate",
         "-U", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "-P", str(site_dir),          # directorio de salida
+        "-P", str(site_dir),
         url,
     ]
 
@@ -181,10 +144,9 @@ def step_wget(url: str, project_dir: Path, debug: bool) -> bool:
         result = subprocess.run(
             wget_cmd,
             cwd=str(project_dir),
-            timeout=300,  # 5 minutos maximo
-            capture_output=not debug,  # en debug, mostrar output de wget
+            timeout=300,
+            capture_output=not debug,
         )
-        # wget retorna 8 cuando hay errores parciales (404s, etc.) — es normal
         if result.returncode not in (0, 8):
             print(f"[wget] WARN: wget termino con codigo {result.returncode}")
             if not debug and result.stderr:
@@ -195,7 +157,6 @@ def step_wget(url: str, project_dir: Path, debug: bool) -> bool:
     except subprocess.TimeoutExpired:
         print("[wget] WARN: wget timeout (5 min). Descarga parcial.")
 
-    # Verificar que se descargo algo
     downloaded = list(site_dir.rglob("*"))
     files = [f for f in downloaded if f.is_file()]
     js_files = [f for f in files if f.suffix == ".js"]
@@ -207,7 +168,6 @@ def step_wget(url: str, project_dir: Path, debug: bool) -> bool:
         print("[wget] ERROR: No se descargo ningun archivo.")
         return False
 
-    # Listar lo descargado
     if debug:
         for f in sorted(files)[:50]:
             rel = f.relative_to(site_dir)
@@ -219,16 +179,15 @@ def step_wget(url: str, project_dir: Path, debug: bool) -> bool:
     return True
 
 
-# --- PASO 2: claude /init — reconocimiento con Claude Code real ---------------
+# --- PASO 2: claude /init ----------------------------------------------------
 
 def step_init(project_dir: Path, debug: bool) -> bool:
-    """Ejecuta 'claude -p /init' en la carpeta del sitio descargado."""
+    """Ejecuta 'claude -p /init' real en la carpeta del proyecto."""
     print()
     print("=" * 60)
     print("[PASO 2/3] Reconocimiento con Claude Code (/init)")
     print("=" * 60)
 
-    # Verificar que claude CLI existe
     claude_bin = shutil.which("claude")
     if not claude_bin:
         print("[init] ERROR: 'claude' CLI no encontrado.")
@@ -237,103 +196,169 @@ def step_init(project_dir: Path, debug: bool) -> bool:
 
     dbg(f"Claude CLI: {claude_bin}", debug)
 
-    # Ejecutar claude -p "/init" en el directorio del proyecto
-    # Esto hace que Claude Code analice todo el contenido y genere CLAUDE.md
     claude_cmd = [
         claude_bin,
         "-p", "/init",
-        "--dangerously-skip-permissions",  # no preguntar permisos en modo no-interactivo
+        "--dangerously-skip-permissions",
     ]
 
     dbg(f"Comando: {' '.join(claude_cmd)}", debug)
-    dbg(f"cwd: {project_dir}", debug)
     print(f"[init] Ejecutando Claude Code /init en {project_dir} ...")
 
     try:
-        result = subprocess.run(
-            claude_cmd,
-            cwd=str(project_dir),
-            timeout=180,  # 3 minutos maximo
-            capture_output=True,
-            text=True,
-        )
-
-        if debug and result.stdout:
-            for line in result.stdout.strip().split("\n"):
-                dbg(f"[claude] {line}", debug)
-
-        if result.returncode != 0:
-            print(f"[init] WARN: claude termino con codigo {result.returncode}")
-            if result.stderr:
+        if debug:
+            # En debug, mostrar output en tiempo real
+            proc = subprocess.Popen(
+                claude_cmd,
+                cwd=str(project_dir),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            for line in proc.stdout:
+                print(f"  [claude] {line}", end="")
+            proc.wait(timeout=300)
+            returncode = proc.returncode
+        else:
+            result = subprocess.run(
+                claude_cmd,
+                cwd=str(project_dir),
+                timeout=300,
+                capture_output=True,
+                text=True,
+            )
+            returncode = result.returncode
+            if returncode != 0 and result.stderr:
                 print(f"[init] stderr: {result.stderr[-500:]}")
+
+        if returncode != 0:
+            print(f"[init] WARN: claude termino con codigo {returncode}")
 
     except FileNotFoundError:
         print("[init] ERROR: No se pudo ejecutar claude CLI.")
         return False
     except subprocess.TimeoutExpired:
-        print("[init] WARN: claude /init timeout (3 min). Puede haber generado un CLAUDE.md parcial.")
+        print("[init] WARN: claude /init timeout (5 min).")
 
-    # Verificar resultado
     claude_md = project_dir / "CLAUDE.md"
     if claude_md.is_file():
         size = claude_md.stat().st_size
         print(f"[init] OK: CLAUDE.md generado ({size:,} bytes)")
-        if debug:
-            content = claude_md.read_text(encoding="utf-8")
-            dbg(f"CLAUDE.md preview:\n{content[:800]}", debug)
         return True
     else:
-        print("[init] WARN: No se genero CLAUDE.md. El analisis continuara sin contexto /init.")
+        print("[init] WARN: No se genero CLAUDE.md.")
         return False
 
 
-# --- PASO 3: Agent SDK — analisis de seguridad --------------------------------
+# --- PASO 3: claude -p audit (CLI real, no SDK) -------------------------------
 
-async def step_audit(url: str, model: str, budget: float, max_turns: int,
-                     project_dir: Path, debug: bool) -> str | None:
-    """Analisis de seguridad con Claude Agent SDK, usando el CLAUDE.md del /init."""
-    from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMessage, AssistantMessage
-
+def step_audit(url: str, model: str, budget: float, max_turns: int,
+               project_dir: Path, debug: bool) -> bool:
+    """Ejecuta el analisis de seguridad usando claude CLI real (no SDK)."""
     print()
     print("=" * 60)
-    print("[PASO 3/3] Analisis de seguridad con Agent SDK")
-    print(f"[audit] Modelo: {model} | Budget: ${budget:.2f} | Turns: {max_turns}")
+    print("[PASO 3/3] Analisis de seguridad con Claude Code")
+    print(f"[audit] Modelo: {model} | Budget: ${budget:.2f}")
     print("=" * 60)
 
-    system_prompt = build_system_prompt(project_dir, debug)
-    dbg(f"System prompt total: {len(system_prompt)} chars", debug)
+    claude_bin = shutil.which("claude")
+    if not claude_bin:
+        print("[audit] ERROR: 'claude' CLI no encontrado.")
+        return False
 
-    async for message in query(
-        prompt=AUDIT_PROMPT.format(url=url),
-        options=ClaudeAgentOptions(
-            system_prompt=system_prompt,
-            model=model,
-            max_turns=max_turns,
-            max_budget_usd=budget,
-            allowed_tools=["Read", "Write", "Edit", "Glob", "Grep", "Bash", "WebSearch", "WebFetch"],
-            permission_mode="acceptEdits",
-            cwd=str(project_dir),
-        ),
-    ):
+    # Construir system prompt desde AGENT_PROMPT.md
+    agent_prompt_path = Path(__file__).parent / "AGENT_PROMPT.md"
+    if not agent_prompt_path.is_file():
+        print(f"[audit] ERROR: No se encontro {agent_prompt_path}")
+        return False
+
+    system_prompt = agent_prompt_path.read_text(encoding="utf-8")
+    dbg(f"System prompt: {len(system_prompt)} chars desde {agent_prompt_path}", debug)
+
+    # Armar el prompt del usuario
+    user_prompt = AUDIT_PROMPT.format(url=url)
+
+    # Comando claude con system prompt, modelo, budget, y output JSON
+    claude_cmd = [
+        claude_bin,
+        "-p", user_prompt,
+        "--system-prompt", system_prompt,
+        "--model", model,
+        "--max-budget-usd", str(budget),
+        "--dangerously-skip-permissions",
+        "--output-format", "text",
+    ]
+
+    dbg(f"Comando: claude -p '...' --model {model} --max-budget-usd {budget}", debug)
+    print(f"[audit] Ejecutando analisis de seguridad ...")
+
+    try:
         if debug:
-            if isinstance(message, ResultMessage):
-                dbg(f"ResultMessage (len={len(message.result or '')})", debug)
-            elif isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if hasattr(block, "text") and block.text:
-                        dbg(f"Text: {block.text[:200]}", debug)
-                    elif hasattr(block, "name"):
-                        tool_input = ""
-                        if hasattr(block, "input"):
-                            tool_input = json.dumps(block.input, ensure_ascii=False)[:150]
-                        dbg(f"Tool: {block.name}({tool_input})", debug)
-            elif isinstance(message, SystemMessage):
-                dbg(f"SystemMessage subtype={getattr(message, 'subtype', '')}", debug)
+            # En debug, streaming del output en tiempo real
+            proc = subprocess.Popen(
+                claude_cmd,
+                cwd=str(project_dir),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            output_lines = []
+            for line in proc.stdout:
+                output_lines.append(line)
+                print(f"  [claude] {line}", end="")
+            proc.wait(timeout=600)
+            returncode = proc.returncode
+            output = "".join(output_lines)
+        else:
+            result = subprocess.run(
+                claude_cmd,
+                cwd=str(project_dir),
+                timeout=600,  # 10 minutos
+                capture_output=True,
+                text=True,
+            )
+            returncode = result.returncode
+            output = result.stdout
+            if result.stderr:
+                dbg(f"stderr: {result.stderr[-300:]}", debug)
 
-        if isinstance(message, ResultMessage):
-            return message.result
+        if returncode != 0:
+            print(f"[audit] WARN: claude termino con codigo {returncode}")
 
-    return None
+    except FileNotFoundError:
+        print("[audit] ERROR: No se pudo ejecutar claude CLI.")
+        return False
+    except subprocess.TimeoutExpired:
+        print("[audit] WARN: claude timeout (10 min).")
+        return False
+
+    # Verificar si se genero el report JSON (el agente deberia haberlo escrito con Write)
+    report_path = project_dir / "webaudit_report.json"
+    if report_path.is_file():
+        print(f"[audit] OK: Informe generado ({report_path.stat().st_size:,} bytes)")
+        return True
+
+    # Si no lo escribio con Write, intentar extraer JSON del output
+    if output:
+        try:
+            # Buscar JSON en el output
+            json_start = output.find("{")
+            json_end = output.rfind("}") + 1
+            if json_start >= 0 and json_end > json_start:
+                candidate = output[json_start:json_end]
+                json.loads(candidate)  # validar
+                report_path.write_text(candidate, encoding="utf-8")
+                print(f"[audit] OK: Informe extraido del output ({len(candidate):,} bytes)")
+                return True
+        except json.JSONDecodeError:
+            pass
+
+        # Guardar como texto
+        txt_path = project_dir / "webaudit_report.txt"
+        txt_path.write_text(output, encoding="utf-8")
+        print(f"[audit] Resultado guardado como texto: {txt_path}")
+
+    return True
 
 
 # --- Health check -------------------------------------------------------------
@@ -368,21 +393,12 @@ def run_check(config: dict, debug: bool) -> bool:
             )
             print(f"  OK: API respondio (tokens: {resp.usage.output_tokens})")
         except ImportError:
-            print("  SKIP: anthropic SDK no instalado")
+            print("  SKIP: anthropic SDK no instalado (solo necesario para check)")
         except Exception as e:
             print(f"  FAIL: {e}")
             ok = False
     else:
         print("  SKIP: No hay API key.")
-        ok = False
-
-    print("[check] Claude Agent SDK ...")
-    try:
-        import claude_agent_sdk
-        version = getattr(claude_agent_sdk, "__version__", "unknown")
-        print(f"  OK: claude-agent-sdk {version}")
-    except ImportError as e:
-        print(f"  FAIL: {e}")
         ok = False
 
     print("[check] Claude Code CLI ...")
@@ -394,7 +410,7 @@ def run_check(config: dict, debug: bool) -> bool:
         except Exception:
             print(f"  OK: {claude_bin}")
     else:
-        print("  FAIL: 'claude' no encontrado. Necesario para /init.")
+        print("  FAIL: 'claude' no encontrado. Es necesario para /init y audit.")
         ok = False
 
     base_dir = Path(__file__).parent
@@ -405,7 +421,7 @@ def run_check(config: dict, debug: bool) -> bool:
         fpath = base_dir / fname
         print(f"[check] {label} ({fname}) ...")
         if fpath.is_file():
-            print(f"  OK: {fpath} ({fpath.stat().st_size} bytes)")
+            print(f"  OK: {fpath} ({fpath.stat().st_size:,} bytes)")
         elif required:
             print(f"  FAIL: No encontrado")
             ok = False
@@ -441,13 +457,13 @@ def run_check(config: dict, debug: bool) -> bool:
 
 # --- Flujo principal ----------------------------------------------------------
 
-async def run_audit(url: str, model: str, budget: float, max_turns: int,
-                    project_dir: Path, debug: bool):
-    """Flujo completo: wget → claude /init → Agent SDK audit."""
+def run_audit(url: str, model: str, budget: float, max_turns: int,
+              project_dir: Path, debug: bool):
+    """Flujo completo: wget → claude /init → claude audit."""
 
     print(f"[webaudit] URL: {url}")
     print(f"[webaudit] Modelo: {model}")
-    print(f"[webaudit] Budget: ${budget:.2f} | Max turns: {max_turns}")
+    print(f"[webaudit] Budget: ${budget:.2f}")
     print(f"[webaudit] Proyecto: {project_dir}")
     print()
 
@@ -458,38 +474,19 @@ async def run_audit(url: str, model: str, budget: float, max_turns: int,
 
     # --- PASO 2: claude /init ---
     step_init(project_dir, debug)
-    # No abortamos si falla — el audit puede funcionar sin /init, solo peor
 
-    # --- PASO 3: audit con Agent SDK ---
-    result_text = await step_audit(url, model, budget, max_turns, project_dir, debug)
+    # --- PASO 3: claude audit ---
+    step_audit(url, model, budget, max_turns, project_dir, debug)
 
-    # --- Resultado ---
+    # --- Resumen ---
     print("\n" + "=" * 60)
     print("[webaudit] Analisis completo.")
-
-    report_path = project_dir / "webaudit_report.json"
-    try:
-        if report_path.is_file():
-            print(f"[webaudit] Informe: {report_path}")
-        elif result_text:
-            json.loads(result_text)
-            report_path.write_text(result_text, encoding="utf-8")
-            print(f"[webaudit] Informe: {report_path}")
-    except (json.JSONDecodeError, TypeError):
-        if result_text:
-            txt_path = project_dir / "webaudit_report.txt"
-            txt_path.write_text(result_text, encoding="utf-8")
-            print(f"[webaudit] Resultado: {txt_path}")
-
-    # Listar archivos del proyecto
     print(f"\n[webaudit] Archivos en {project_dir}:")
     for f in sorted(project_dir.rglob("*")):
         if f.is_file() and ".git" not in f.parts:
             size = f.stat().st_size
             rel = f.relative_to(project_dir)
             print(f"  {rel} ({size:,} bytes)")
-
-    return result_text
 
 
 # --- CLI ----------------------------------------------------------------------
@@ -508,7 +505,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("-t", "--max-turns", type=int, help="Maximo de turnos del agente")
     scan.add_argument("-o", "--output-dir", help="Directorio de salida (default: auto)")
     scan.add_argument("-w", "--work-dir", help="Directorio base de trabajo (default: ~/webaudit)")
-    scan.add_argument("-d", "--debug", action="store_true", help="Modo debug")
+    scan.add_argument("-d", "--debug", action="store_true", help="Modo debug: output en tiempo real")
 
     check = sub.add_parser("check", help="Verificar salud del sistema")
     check.add_argument("-d", "--debug", action="store_true", help="Modo debug")
@@ -553,7 +550,7 @@ def main():
     work_dir = args.work_dir or config["work_dir"]
     project_dir = resolve_project_dir(work_dir, url, args.output_dir, debug)
 
-    anyio.run(run_audit, url, model, budget, max_turns, project_dir, debug)
+    run_audit(url, model, budget, max_turns, project_dir, debug)
 
 
 if __name__ == "__main__":
