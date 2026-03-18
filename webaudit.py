@@ -81,8 +81,7 @@ async def run_audit(url: str, model: str, budget: float, max_turns: int, work_di
             max_turns=max_turns,
             max_budget_usd=budget,
             allowed_tools=["Read", "Write", "Edit", "Glob", "Grep", "Bash", "WebSearch", "WebFetch"],
-            permission_mode="bypassPermissions",
-            allow_dangerously_skip_permissions=True,
+            permission_mode="acceptEdits",
             cwd=work_dir,
         ),
     ):
