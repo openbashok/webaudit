@@ -90,8 +90,8 @@ def run_claude_streaming(claude_cmd: list, cwd: str, label: str, debug: bool,
     y muestra actividad en tiempo real.
     Retorna (returncode, output_text).
     """
-    # Usar stream-json para tener visibilidad
-    cmd = claude_cmd + ["--output-format", "stream-json"]
+    # Usar stream-json para tener visibilidad (requiere --verbose con -p)
+    cmd = claude_cmd + ["--output-format", "stream-json", "--verbose"]
 
     proc = subprocess.Popen(
         cmd,
