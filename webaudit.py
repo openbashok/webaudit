@@ -62,13 +62,31 @@ def dbg(msg: str, debug: bool):
 
 # --- Prompt del sistema -------------------------------------------------------
 
-def load_system_prompt() -> str:
-    """Lee AGENT_PROMPT.md desde el mismo directorio que este script."""
-    prompt_path = Path(__file__).parent / "AGENT_PROMPT.md"
+def load_system_prompt(debug: bool = False) -> str:
+    """
+    Construye el system prompt completo.
+    Combina CLAUDE.md (contexto del proyecto) + AGENT_PROMPT.md (instrucciones del agente).
+    Esto equivale a lo que Claude Code hace con /init — le da al agente el contexto
+    completo del proyecto antes de ejecutar.
+    """
+    base_dir = Path(__file__).parent
+    parts = []
+
+    # CLAUDE.md — contexto del proyecto (equivalente a /init)
+    claude_md = base_dir / "CLAUDE.md"
+    if claude_md.is_file():
+        dbg(f"Cargando contexto del proyecto: {claude_md}", debug)
+        parts.append(f"# Contexto del proyecto\n\n{claude_md.read_text(encoding='utf-8')}")
+
+    # AGENT_PROMPT.md — instrucciones del agente
+    prompt_path = base_dir / "AGENT_PROMPT.md"
     if not prompt_path.is_file():
         print(f"Error: no se encontro {prompt_path}", file=sys.stderr)
         sys.exit(1)
-    return prompt_path.read_text(encoding="utf-8")
+    dbg(f"Cargando instrucciones del agente: {prompt_path}", debug)
+    parts.append(prompt_path.read_text(encoding="utf-8"))
+
+    return "\n\n---\n\n".join(parts)
 
 
 # --- Directorio de proyecto ---------------------------------------------------
@@ -147,15 +165,19 @@ def run_check(config: dict, debug: bool) -> bool:
         print(f"  FAIL: {e}")
         ok = False
 
-    # 5. AGENT_PROMPT.md
-    print("[check] System prompt (AGENT_PROMPT.md) ...")
-    prompt_path = Path(__file__).parent / "AGENT_PROMPT.md"
-    if prompt_path.is_file():
-        size = prompt_path.stat().st_size
-        print(f"  OK: {prompt_path} ({size} bytes)")
-    else:
-        print(f"  FAIL: No encontrado en {prompt_path}")
-        ok = False
+    # 5. System prompt files
+    base_dir = Path(__file__).parent
+    for fname, label in [("CLAUDE.md", "Contexto del proyecto"), ("AGENT_PROMPT.md", "Instrucciones del agente")]:
+        fpath = base_dir / fname
+        print(f"[check] {label} ({fname}) ...")
+        if fpath.is_file():
+            size = fpath.stat().st_size
+            print(f"  OK: {fpath} ({size} bytes)")
+        elif fname == "AGENT_PROMPT.md":
+            print(f"  FAIL: No encontrado en {fpath}")
+            ok = False
+        else:
+            print(f"  WARN: No encontrado (opcional)")
 
     # 6. wget
     print("[check] wget (para descarga de sitios) ...")
@@ -194,7 +216,8 @@ async def run_audit(url: str, model: str, budget: float, max_turns: int,
     """Ejecuta el agente de auditoria contra la URL indicada."""
     from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMessage, AssistantMessage
 
-    system_prompt = load_system_prompt()
+    system_prompt = load_system_prompt(debug)
+    dbg(f"System prompt total: {len(system_prompt)} chars", debug)
 
     print(f"[webaudit] URL objetivo: {url}")
     print(f"[webaudit] Modelo: {model}")
