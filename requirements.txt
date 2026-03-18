@@ -1,3 +1,4 @@
 claude-agent-sdk
+anthropic
 pyyaml
 anyio
