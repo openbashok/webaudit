@@ -137,28 +137,37 @@ def run_claude_streaming(claude_cmd: list, cwd: str, label: str, debug: bool,
 
             etype = event.get("type", "")
 
-            # Extraer texto del resultado
+            # Eventos tipo "assistant" contienen content blocks con texto y tool_use
             if etype == "assistant" and "message" in event:
                 msg = event["message"]
                 for block in msg.get("content", []):
-                    if block.get("type") == "text":
-                        output_text_parts.append(block.get("text", ""))
+                    btype = block.get("type", "")
+                    if btype == "text":
+                        text = block.get("text", "")
+                        if text:
+                            output_text_parts.append(text)
+                            if debug:
+                                # Mostrar lo que dice el agente (truncado)
+                                preview = text.replace("\n", " ")[:120]
+                                dbg(f"[texto] {preview}", debug)
+                    elif btype == "tool_use":
+                        tool_name = block.get("name", "?")
+                        tool_count += 1
+                        elapsed = int(time.time() - start_time)
+                        mins, secs = divmod(elapsed, 60)
+                        print(f"\r[{label}] {mins:02d}:{secs:02d} | Tool #{tool_count}: {tool_name}                    ", flush=True)
+                        if debug:
+                            tool_input = json.dumps(block.get("input", {}), ensure_ascii=False)[:200]
+                            dbg(f"  {tool_name}({tool_input})", debug)
 
-            # Mostrar actividad de herramientas
-            if etype == "tool_use":
-                tool_name = event.get("tool", {}).get("name", event.get("name", "?"))
-                tool_count += 1
-                elapsed = int(time.time() - start_time)
-                mins, secs = divmod(elapsed, 60)
-                print(f"\r[{label}] {mins:02d}:{secs:02d} | Tool #{tool_count}: {tool_name}                    ", flush=True)
+            # Eventos tipo "user" contienen tool_result
+            elif etype == "user" and "message" in event:
                 if debug:
-                    tool_input = json.dumps(event.get("tool", {}).get("input", event.get("input", {})), ensure_ascii=False)[:200]
-                    dbg(f"  {tool_name}({tool_input})", debug)
-
-            elif etype == "tool_result":
-                if debug:
-                    content = str(event.get("content", ""))[:150]
-                    dbg(f"  -> {content}", debug)
+                    msg = event["message"]
+                    for block in msg.get("content", []):
+                        if block.get("type") == "tool_result":
+                            content = str(block.get("content", ""))[:150]
+                            dbg(f"  -> {content}", debug)
 
             elif etype == "result":
                 # Mensaje final
@@ -170,7 +179,7 @@ def run_claude_streaming(claude_cmd: list, cwd: str, label: str, debug: bool,
                 if cost or duration:
                     print(f"\r[{label}] Completado | Costo: ${cost:.4f} | Duracion: {duration/1000:.1f}s                    ")
 
-            elif debug:
+            elif debug and etype not in ("system",):
                 dbg(f"[stream] {etype}: {json.dumps(event, ensure_ascii=False)[:200]}", debug)
 
         proc.wait(timeout=timeout)
