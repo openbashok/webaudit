@@ -14,6 +14,8 @@ import json
 import shutil
 import argparse
 import subprocess
+import time
+import threading
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse
@@ -23,36 +25,26 @@ import yaml
 # --- Prompt para el audit (paso 3) -------------------------------------------
 
 AUDIT_PROMPT = """\
-Realiza el analisis de seguridad completo del sitio: {url}
+Auditoria de codigo fuente del sitio: {url}
 
-El sitio ya fue descargado y esta en el subdirectorio ./site/
-Ya se ejecuto /init y el archivo CLAUDE.md en este directorio tiene el contexto
-completo del codigo descargado.
+El sitio ya fue descargado en ./site/ y CLAUDE.md tiene el contexto del codigo.
 
-Ejecuta las Fases 3, 4 y 5 del system prompt:
+INSTRUCCIONES — segui los pasos del system prompt en orden:
 
-FASE 3 — ANALISIS DE SEGURIDAD:
-Analiza todo el codigo JavaScript buscando vulnerabilidades en todas las categorias
-(cifrado, autenticacion, control de acceso, inyeccion, exposicion de datos,
-dependencias, CSRF, etc.). Para cada hallazgo, documenta archivo, linea, codigo
-vulnerable, y por que es un problema. Busca CVEs para las librerias con version
-detectada — pero solo reportalos si la funcion vulnerable se usa en el codigo.
+1. Lee CLAUDE.md para entender la estructura.
+2. Usa Glob para listar todos los .js y .html en ./site/
+3. Clasifica cada JS como PROPIO o LIBRERIA.
+4. Lee CADA archivo JS propio completo con Read — linea por linea.
+5. Usa Grep para buscar patrones de vulnerabilidad (claves hardcodeadas, innerHTML, eval, localStorage, fetch, postMessage, etc.)
+6. Para librerias con version, busca CVEs con WebSearch y verifica si las funciones afectadas se usan.
+7. Verifica cada hallazgo potencial — vuelve a leer el contexto antes de confirmar.
+8. Genera PoCs JavaScript inyectables para hallazgos Alta/Critica.
+9. Genera la suite completa (panel inyectable con todos los PoCs).
+10. Guarda webaudit_report.json con Write.
 
-FASE 4 — PRUEBAS DE CONCEPTO:
-Para cada hallazgo de severidad Alta o Critica, genera codigo JavaScript inyectable
-desde la consola del navegador. Ademas genera una suite completa que agrupe todos
-los PoCs en un panel interactivo inyectable.
-
-FASE 5 — INFORME:
-Genera el archivo webaudit_report.json con la estructura JSON definida en el
-system prompt. Los campos console_instrumentation (por hallazgo y en la raiz)
-son los mas importantes — deben ser JS funcional copiar-y-pegar en consola.
-
-IMPORTANTE:
-- Lee CLAUDE.md primero para entender el sitio.
-- Despues lee los archivos JS/HTML reales para encontrar vulnerabilidades.
-- No reportes falsos positivos. Verifica que cada vulnerabilidad sea real.
-- Guarda webaudit_report.json en este directorio.
+CRITICO: Esto es analisis ESTATICO DE CODIGO FUENTE, no un pentest de red.
+Tu trabajo es LEER el codigo JavaScript y encontrar vulnerabilidades EN EL CODIGO.
+No revises headers HTTP ni hagas pruebas de red. Lee archivos, busca patrones, analiza flujos de datos.
 """
 
 # --- Configuracion -----------------------------------------------------------
@@ -89,6 +81,112 @@ def load_config() -> dict:
 def dbg(msg: str, debug: bool):
     if debug:
         print(f"[debug] {msg}", file=sys.stderr)
+
+
+def run_claude_streaming(claude_cmd: list, cwd: str, label: str, debug: bool,
+                         timeout: int = 600) -> tuple[int, str]:
+    """
+    Ejecuta un comando claude -p con --output-format stream-json
+    y muestra actividad en tiempo real.
+    Retorna (returncode, output_text).
+    """
+    # Usar stream-json para tener visibilidad
+    cmd = claude_cmd + ["--output-format", "stream-json"]
+
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    output_text_parts = []
+    last_activity = time.time()
+    tool_count = 0
+    start_time = time.time()
+
+    # Thread para mostrar heartbeat si no hay actividad
+    stop_heartbeat = threading.Event()
+
+    def heartbeat():
+        while not stop_heartbeat.is_set():
+            elapsed = int(time.time() - start_time)
+            mins, secs = divmod(elapsed, 60)
+            if time.time() - last_activity > 10:
+                print(f"\r[{label}] Trabajando... {mins:02d}:{secs:02d} | herramientas usadas: {tool_count}   ", end="", flush=True)
+            stop_heartbeat.wait(5)
+
+    hb_thread = threading.Thread(target=heartbeat, daemon=True)
+    hb_thread.start()
+
+    try:
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+
+            last_activity = time.time()
+
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                if debug:
+                    dbg(f"[stream] raw: {line[:200]}", debug)
+                continue
+
+            etype = event.get("type", "")
+
+            # Extraer texto del resultado
+            if etype == "assistant" and "message" in event:
+                msg = event["message"]
+                for block in msg.get("content", []):
+                    if block.get("type") == "text":
+                        output_text_parts.append(block.get("text", ""))
+
+            # Mostrar actividad de herramientas
+            if etype == "tool_use":
+                tool_name = event.get("tool", {}).get("name", event.get("name", "?"))
+                tool_count += 1
+                elapsed = int(time.time() - start_time)
+                mins, secs = divmod(elapsed, 60)
+                print(f"\r[{label}] {mins:02d}:{secs:02d} | Tool #{tool_count}: {tool_name}                    ", flush=True)
+                if debug:
+                    tool_input = json.dumps(event.get("tool", {}).get("input", event.get("input", {})), ensure_ascii=False)[:200]
+                    dbg(f"  {tool_name}({tool_input})", debug)
+
+            elif etype == "tool_result":
+                if debug:
+                    content = str(event.get("content", ""))[:150]
+                    dbg(f"  -> {content}", debug)
+
+            elif etype == "result":
+                # Mensaje final
+                result_text = event.get("result", "")
+                if result_text:
+                    output_text_parts.append(result_text)
+                cost = event.get("cost_usd", 0)
+                duration = event.get("duration_ms", 0)
+                if cost or duration:
+                    print(f"\r[{label}] Completado | Costo: ${cost:.4f} | Duracion: {duration/1000:.1f}s                    ")
+
+            elif debug:
+                dbg(f"[stream] {etype}: {json.dumps(event, ensure_ascii=False)[:200]}", debug)
+
+        proc.wait(timeout=timeout)
+
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        print(f"\n[{label}] TIMEOUT ({timeout}s)")
+    finally:
+        stop_heartbeat.set()
+        hb_thread.join(timeout=2)
+
+    elapsed = int(time.time() - start_time)
+    mins, secs = divmod(elapsed, 60)
+    print(f"\r[{label}] Finalizado en {mins:02d}:{secs:02d} | {tool_count} herramientas usadas                    ")
+
+    return proc.returncode or 0, "".join(output_text_parts)
 
 
 # --- Directorio de proyecto ---------------------------------------------------
@@ -200,51 +298,17 @@ def step_init(project_dir: Path, debug: bool) -> bool:
         print("[init] Instala Claude Code: https://claude.ai/code")
         return False
 
-    dbg(f"Claude CLI: {claude_bin}", debug)
-
     claude_cmd = [
         claude_bin,
         "-p", "/init",
         "--dangerously-skip-permissions",
     ]
 
-    dbg(f"Comando: {' '.join(claude_cmd)}", debug)
     print(f"[init] Ejecutando Claude Code /init en {project_dir} ...")
+    returncode, _ = run_claude_streaming(claude_cmd, str(project_dir), "init", debug, timeout=300)
 
-    try:
-        if debug:
-            # En debug, mostrar output en tiempo real
-            proc = subprocess.Popen(
-                claude_cmd,
-                cwd=str(project_dir),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-            for line in proc.stdout:
-                print(f"  [claude] {line}", end="")
-            proc.wait(timeout=300)
-            returncode = proc.returncode
-        else:
-            result = subprocess.run(
-                claude_cmd,
-                cwd=str(project_dir),
-                timeout=300,
-                capture_output=True,
-                text=True,
-            )
-            returncode = result.returncode
-            if returncode != 0 and result.stderr:
-                print(f"[init] stderr: {result.stderr[-500:]}")
-
-        if returncode != 0:
-            print(f"[init] WARN: claude termino con codigo {returncode}")
-
-    except FileNotFoundError:
-        print("[init] ERROR: No se pudo ejecutar claude CLI.")
-        return False
-    except subprocess.TimeoutExpired:
-        print("[init] WARN: claude /init timeout (5 min).")
+    if returncode != 0:
+        print(f"[init] WARN: claude termino con codigo {returncode}")
 
     claude_md = project_dir / "CLAUDE.md"
     if claude_md.is_file():
@@ -284,7 +348,7 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
     # Armar el prompt del usuario
     user_prompt = AUDIT_PROMPT.format(url=url)
 
-    # Comando claude con system prompt, modelo, budget, y output JSON
+    # Comando claude con system prompt, modelo, budget
     claude_cmd = [
         claude_bin,
         "-p", user_prompt,
@@ -292,51 +356,15 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
         "--model", model,
         "--max-budget-usd", str(budget),
         "--dangerously-skip-permissions",
-        "--output-format", "text",
     ]
 
     dbg(f"Comando: claude -p '...' --model {model} --max-budget-usd {budget}", debug)
     print(f"[audit] Ejecutando analisis de seguridad ...")
 
-    try:
-        if debug:
-            # En debug, streaming del output en tiempo real
-            proc = subprocess.Popen(
-                claude_cmd,
-                cwd=str(project_dir),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-            output_lines = []
-            for line in proc.stdout:
-                output_lines.append(line)
-                print(f"  [claude] {line}", end="")
-            proc.wait(timeout=600)
-            returncode = proc.returncode
-            output = "".join(output_lines)
-        else:
-            result = subprocess.run(
-                claude_cmd,
-                cwd=str(project_dir),
-                timeout=600,  # 10 minutos
-                capture_output=True,
-                text=True,
-            )
-            returncode = result.returncode
-            output = result.stdout
-            if result.stderr:
-                dbg(f"stderr: {result.stderr[-300:]}", debug)
+    returncode, output = run_claude_streaming(claude_cmd, str(project_dir), "audit", debug, timeout=600)
 
-        if returncode != 0:
-            print(f"[audit] WARN: claude termino con codigo {returncode}")
-
-    except FileNotFoundError:
-        print("[audit] ERROR: No se pudo ejecutar claude CLI.")
-        return False
-    except subprocess.TimeoutExpired:
-        print("[audit] WARN: claude timeout (10 min).")
-        return False
+    if returncode != 0:
+        print(f"[audit] WARN: claude termino con codigo {returncode}")
 
     # Verificar si se genero el report JSON (el agente deberia haberlo escrito con Write)
     report_path = project_dir / "webaudit_report.json"
