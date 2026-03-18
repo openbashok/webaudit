@@ -278,7 +278,84 @@ Genera codigo JavaScript inyectable en consola que:
 
 Si NO se detecta criptografia de requests, el campo `crypto_analysis` del JSON debe ser `null` y se omite del informe.
 
-### Paso 10: Informe
+### Paso 10: Burp Suite Extension (SOLO SI HAY CRYPTO)
+
+Si `crypto_analysis.detected` es `true`, genera un plugin de Burp Suite en Python (Jython) que permita al pentester ver el trafico descifrado directamente en Burp.
+
+El plugin debe ser un archivo .py completo y funcional que implementa:
+
+#### Estructura obligatoria
+
+```python
+from burp import IBurpExtender, ITab, IHttpListener
+from javax.swing import (JPanel, JTable, JScrollPane, JSplitPane,
+                         JTextArea, JLabel, SwingUtilities, JButton,
+                         BorderFactory, BoxLayout, Box, JComboBox,
+                         RowFilter)
+from javax.swing.table import AbstractTableModel, TableRowSorter
+from java.awt import BorderLayout, Font, Color, Dimension
+# ... etc
+```
+
+#### Componentes requeridos
+
+1. **CryptoEngine**: Clase con metodos `encrypt()` y `decrypt()` implementando el esquema EXACTO que encontraste en el codigo del target. Debe replicar el mismo algoritmo, modo, key derivation, padding e IV que usa la app. Incluir la clave/passphrase hardcodeada si la encontraste.
+
+2. **RequestParser**: Clase que sabe extraer los campos cifrados de los requests/responses del target. Debe:
+   - Analizar la estructura del request (POST body, JSON fields, query params, headers — lo que use la app)
+   - Extraer el campo cifrado (ej: `data`, `payload`, `encrypted`, etc.)
+   - Llamar a CryptoEngine.decrypt() y devolver el plaintext
+   - Para responses: extraer el campo cifrado de la respuesta y descifrar
+
+3. **Tab UI** ("WebAudit Traffic"):
+   - Tabla con columnas: #, Time, Method, URL, Status, y columnas custom relevantes al target
+   - Split inferior: panel izquierdo REQUEST (descifrado), panel derecho RESPONSE (descifrado)
+   - Headers HTTP originales arriba, body descifrado (JSON pretty-printed) abajo
+   - Boton "Sync Proxy" para importar historial incremental (sin duplicados)
+   - Boton "Clear" para limpiar
+   - Dark theme (background #1e1e2e, foreground #cdd6f4, green #a6e3a1 para request, blue #89b4fa para response)
+
+4. **IHttpListener**: Captura en tiempo real, filtrando solo URLs relevantes del target (los endpoints que encontraste en el codigo).
+
+5. **URL Filter**: Solo procesar requests que van a los endpoints donde se usa encriptacion (extraidos del analisis estatico).
+
+#### Ejemplo de CryptoEngine adaptado
+
+Si encontraste CryptoJS AES-CBC con clave hardcodeada:
+```python
+class CryptoEngine:
+    # Key extracted from: config.js line 15
+    KEY = 'MySecretKey12345'
+    # IV extracted from: crypto-utils.js line 8
+    IV = '0000000000000000'
+
+    @staticmethod
+    def decrypt(ciphertext_b64):
+        # Replicate the exact scheme from the target app
+        from javax.crypto import Cipher
+        from javax.crypto.spec import SecretKeySpec, IvParameterSpec
+        import jarray
+        # ... implementation matching the target's crypto ...
+
+    @staticmethod
+    def encrypt(plaintext):
+        # Reverse: encrypt plaintext so pentester can modify and re-encrypt
+        # ... implementation ...
+```
+
+Si encontraste Web Crypto API, forge, o un esquema custom, adaptar el engine a ESE esquema.
+
+#### Notas
+
+- El plugin debe ser **un solo archivo .py** listo para cargar en Burp > Extensions > Add
+- Incluir header con instrucciones de instalacion
+- Incluir comentarios explicando de donde se extrajeron las claves y el esquema
+- El decrypt debe manejar errores graciosamente (try/except, mostrar "[decrypt error]" en vez de crashear)
+- Si la app usa distintos esquemas para distintos endpoints, el parser debe detectar cual aplicar
+
+Si NO se detecto criptografia (`crypto_analysis` es `null`), el campo `burp_extension` debe ser `null`.
+
+### Paso 11: Informe
 
 Guarda el resultado como `webaudit_report.json` usando Write. La estructura:
 
@@ -343,6 +420,7 @@ Guarda el resultado como `webaudit_report.json` usando Write. La estructura:
     ],
     "summary": "The application uses client-side AES-CBC encryption with a hardcoded key to 'protect' login credentials. This provides zero actual security since the key is exposed in the JavaScript source."
   },
+  "burp_extension": "# -*- coding: utf-8 -*-\n# WebAudit Burp Extension ...\nfrom burp import IBurpExtender, ITab, IHttpListener\n...(complete Jython plugin code)...",
   "librerias": [
     {
       "nombre": "jQuery",
@@ -391,4 +469,6 @@ El campo `informe_markdown` debe contener el informe completo legible con:
 8. **APPLICATION_SNIFFER ES OBLIGATORIO.** Genera un sniffer a medida de la aplicacion. No generico — basado en las variables, APIs y storage que encontraste al leer el codigo. El pentester debe poder pegar el sniffer en la consola y ver en tiempo real todo lo que la app hace con datos sensibles.
 
 9. **CRYPTO_ANALYSIS: ANALIZA LA CRIPTOGRAFIA.** Si la app cifra/descifra requests, tokens o datos, documenta el esquema completo (algoritmo, clave, IV, flujo, debilidades) y genera JS inyectable para observar encrypt/decrypt en tiempo real. Si no hay crypto, pon `null`.
+
+10. **BURP_EXTENSION: GENERA EL PLUGIN SI HAY CRYPTO.** Si detectaste criptografia de requests, genera un plugin de Burp Suite completo en Python/Jython que descifra el trafico en tiempo real. El plugin debe replicar el esquema crypto exacto del target. Si no hay crypto, pon `null`.
 ```
