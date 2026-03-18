@@ -182,6 +182,18 @@ def run_claude_streaming(claude_cmd: list, cwd: str, label: str, debug: bool,
         stop_heartbeat.set()
         hb_thread.join(timeout=2)
 
+    # Leer stderr para diagnosticar errores
+    stderr_output = ""
+    try:
+        stderr_output = proc.stderr.read() if proc.stderr else ""
+    except Exception:
+        pass
+
+    if proc.returncode != 0 and stderr_output:
+        print(f"[{label}] ERROR stderr: {stderr_output.strip()[:500]}")
+    elif debug and stderr_output:
+        dbg(f"stderr: {stderr_output.strip()[:300]}", debug)
+
     elapsed = int(time.time() - start_time)
     mins, secs = divmod(elapsed, 60)
     print(f"\r[{label}] Finalizado en {mins:02d}:{secs:02d} | {tool_count} herramientas usadas                    ")
