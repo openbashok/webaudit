@@ -3,20 +3,33 @@
 # install.sh — Instalador de WebAudit
 #
 # Uso:
-#   curl -sL https://raw.githubusercontent.com/openbashok/webaudit/main/install.sh | bash
-#   o bien: ./install.sh
+#   sudo bash -c "$(curl -sL https://raw.githubusercontent.com/openbashok/webaudit/main/install.sh)"
+#   o bien: sudo ./install.sh
 #
-# No requiere sudo. Instala en ~/.local/share/webaudit con symlink en ~/.local/bin.
+# Instala en /opt/webaudit para todos los usuarios.
+# Sin sudo, instala en ~/.local/share/webaudit solo para el usuario actual.
 #
 set -euo pipefail
 
 REPO="openbashok/webaudit"
-INSTALL_DIR="${WEBAUDIT_INSTALL_DIR:-${HOME}/.local/share/webaudit}"
-BIN_DIR="${HOME}/.local/bin"
-BIN_LINK="${BIN_DIR}/webaudit"
-CONFIG_DIR="${HOME}/.config/webaudit"
+
+# --- Detectar si tenemos root ------------------------------------------------
+if [ "$(id -u)" -eq 0 ]; then
+    MODE="system"
+    INSTALL_DIR="${WEBAUDIT_INSTALL_DIR:-/opt/webaudit}"
+    BIN_LINK="/usr/local/bin/webaudit"
+    CONFIG_DIR="/etc/webaudit"
+    PIP_FLAGS=""
+else
+    MODE="user"
+    INSTALL_DIR="${WEBAUDIT_INSTALL_DIR:-${HOME}/.local/share/webaudit}"
+    BIN_LINK="${HOME}/.local/bin/webaudit"
+    CONFIG_DIR="${HOME}/.config/webaudit"
+    PIP_FLAGS="--user"
+fi
 
 echo "=== WebAudit Installer ==="
+echo "Modo: ${MODE} (instalando en ${INSTALL_DIR})"
 
 # --- Dependencias del sistema -------------------------------------------------
 command -v python3 >/dev/null 2>&1 || { echo "Error: python3 no encontrado."; exit 1; }
@@ -36,22 +49,25 @@ fi
 
 # --- Instalar dependencias Python --------------------------------------------
 echo "Instalando dependencias Python ..."
-pip3 install --user --upgrade -r "${INSTALL_DIR}/requirements.txt"
+pip3 install $PIP_FLAGS --upgrade -r "${INSTALL_DIR}/requirements.txt"
 
 # --- Crear symlink al binario -------------------------------------------------
-mkdir -p "$BIN_DIR"
+mkdir -p "$(dirname "$BIN_LINK")"
 chmod +x "${INSTALL_DIR}/webaudit.py"
 ln -sf "${INSTALL_DIR}/webaudit.py" "$BIN_LINK"
 echo "Enlace: $BIN_LINK -> ${INSTALL_DIR}/webaudit.py"
 
-# --- Verificar que ~/.local/bin este en PATH ----------------------------------
-if ! echo "$PATH" | tr ':' '\n' | grep -qx "$BIN_DIR"; then
-    echo ""
-    echo "IMPORTANTE: $BIN_DIR no esta en tu PATH."
-    echo "Agrega esto a tu ~/.bashrc o ~/.zshrc:"
-    echo ""
-    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-    echo ""
+# --- Verificar PATH (solo modo usuario) --------------------------------------
+if [ "$MODE" = "user" ]; then
+    BIN_DIR="$(dirname "$BIN_LINK")"
+    if ! echo "$PATH" | tr ':' '\n' | grep -qx "$BIN_DIR"; then
+        echo ""
+        echo "IMPORTANTE: $BIN_DIR no esta en tu PATH."
+        echo "Agrega esto a tu ~/.bashrc o ~/.zshrc:"
+        echo ""
+        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        echo ""
+    fi
 fi
 
 # --- Crear archivo de configuracion si no existe ------------------------------
