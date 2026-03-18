@@ -6,8 +6,10 @@
 #   sudo bash -c "$(curl -sL https://raw.githubusercontent.com/openbashok/webaudit/main/install.sh)"
 #   o bien: sudo ./install.sh
 #
-# Instala en /opt/webaudit para todos los usuarios.
-# Sin sudo, instala en ~/.local/share/webaudit solo para el usuario actual.
+# Con sudo: /opt/webaudit para todos los usuarios.
+# Sin sudo: ~/.local/share/webaudit solo para el usuario actual.
+#
+# Crea un virtualenv interno para las dependencias Python (compatible PEP 668).
 #
 set -euo pipefail
 
@@ -19,14 +21,14 @@ if [ "$(id -u)" -eq 0 ]; then
     INSTALL_DIR="${WEBAUDIT_INSTALL_DIR:-/opt/webaudit}"
     BIN_LINK="/usr/local/bin/webaudit"
     CONFIG_DIR="/etc/webaudit"
-    PIP_FLAGS=""
 else
     MODE="user"
     INSTALL_DIR="${WEBAUDIT_INSTALL_DIR:-${HOME}/.local/share/webaudit}"
     BIN_LINK="${HOME}/.local/bin/webaudit"
     CONFIG_DIR="${HOME}/.config/webaudit"
-    PIP_FLAGS="--user"
 fi
+
+VENV_DIR="${INSTALL_DIR}/.venv"
 
 echo "=== WebAudit Installer ==="
 echo "Modo: ${MODE} (instalando en ${INSTALL_DIR})"
@@ -34,8 +36,14 @@ echo "Modo: ${MODE} (instalando en ${INSTALL_DIR})"
 # --- Dependencias del sistema -------------------------------------------------
 command -v python3 >/dev/null 2>&1 || { echo "Error: python3 no encontrado."; exit 1; }
 command -v git     >/dev/null 2>&1 || { echo "Error: git no encontrado."; exit 1; }
-command -v pip3    >/dev/null 2>&1 || { echo "Error: pip3 no encontrado."; exit 1; }
 command -v wget    >/dev/null 2>&1 || echo "Aviso: wget no encontrado. El agente lo necesita para descargar sitios."
+
+# Verificar que python3-venv este disponible
+python3 -m venv --help >/dev/null 2>&1 || {
+    echo "Error: python3-venv no disponible."
+    echo "Instala con: apt install python3-venv"
+    exit 1
+}
 
 # --- Clonar o actualizar repositorio -----------------------------------------
 if [ -d "$INSTALL_DIR" ]; then
@@ -47,15 +55,28 @@ else
     git clone "https://github.com/${REPO}.git" "$INSTALL_DIR"
 fi
 
-# --- Instalar dependencias Python --------------------------------------------
-echo "Instalando dependencias Python ..."
-pip3 install $PIP_FLAGS --upgrade -r "${INSTALL_DIR}/requirements.txt"
+# --- Crear/actualizar virtualenv ---------------------------------------------
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Creando virtualenv en $VENV_DIR ..."
+    python3 -m venv "$VENV_DIR"
+fi
 
-# --- Crear symlink al binario -------------------------------------------------
+echo "Instalando dependencias Python en virtualenv ..."
+"${VENV_DIR}/bin/pip" install --upgrade pip -q
+"${VENV_DIR}/bin/pip" install --upgrade -r "${INSTALL_DIR}/requirements.txt"
+
+# --- Crear wrapper script que usa el venv ------------------------------------
+WRAPPER="${INSTALL_DIR}/webaudit"
+cat > "$WRAPPER" <<SCRIPT
+#!/usr/bin/env bash
+exec "${VENV_DIR}/bin/python3" "${INSTALL_DIR}/webaudit.py" "\$@"
+SCRIPT
+chmod +x "$WRAPPER"
+
+# --- Crear symlink al wrapper -------------------------------------------------
 mkdir -p "$(dirname "$BIN_LINK")"
-chmod +x "${INSTALL_DIR}/webaudit.py"
-ln -sf "${INSTALL_DIR}/webaudit.py" "$BIN_LINK"
-echo "Enlace: $BIN_LINK -> ${INSTALL_DIR}/webaudit.py"
+ln -sf "$WRAPPER" "$BIN_LINK"
+echo "Enlace: $BIN_LINK -> $WRAPPER"
 
 # --- Verificar PATH (solo modo usuario) --------------------------------------
 if [ "$MODE" = "user" ]; then
