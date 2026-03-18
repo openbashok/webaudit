@@ -389,31 +389,211 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
 
     # Verificar si se genero el report JSON (el agente deberia haberlo escrito con Write)
     report_path = project_dir / "webaudit_report.json"
-    if report_path.is_file():
-        print(f"[audit] OK: Informe generado ({report_path.stat().st_size:,} bytes)")
-        return True
+    report_data = None
 
-    # Si no lo escribio con Write, intentar extraer JSON del output
-    if output:
+    if report_path.is_file():
+        print(f"[audit] OK: Informe JSON generado ({report_path.stat().st_size:,} bytes)")
         try:
-            # Buscar JSON en el output
+            report_data = json.loads(report_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            print(f"[audit] WARN: webaudit_report.json no es JSON valido")
+    elif output:
+        # Si no lo escribio con Write, intentar extraer JSON del output
+        try:
             json_start = output.find("{")
             json_end = output.rfind("}") + 1
             if json_start >= 0 and json_end > json_start:
                 candidate = output[json_start:json_end]
-                json.loads(candidate)  # validar
+                report_data = json.loads(candidate)
                 report_path.write_text(candidate, encoding="utf-8")
-                print(f"[audit] OK: Informe extraido del output ({len(candidate):,} bytes)")
-                return True
+                print(f"[audit] OK: Informe JSON extraido del output ({len(candidate):,} bytes)")
         except json.JSONDecodeError:
             pass
 
-        # Guardar como texto
-        txt_path = project_dir / "webaudit_report.txt"
-        txt_path.write_text(output, encoding="utf-8")
-        print(f"[audit] Resultado guardado como texto: {txt_path}")
+        if not report_data:
+            txt_path = project_dir / "webaudit_report.txt"
+            txt_path.write_text(output, encoding="utf-8")
+            print(f"[audit] Resultado guardado como texto: {txt_path}")
+
+    # --- Generar reporte Markdown ---
+    if report_data:
+        md_path = project_dir / "webaudit_report.md"
+
+        # Si el agente incluyó informe_markdown, usarlo como base
+        md_content = report_data.get("informe_markdown", "")
+
+        if not md_content:
+            # Generar Markdown desde los datos JSON
+            md_content = _generate_markdown_report(report_data)
+
+        md_path.write_text(md_content, encoding="utf-8")
+        print(f"[audit] OK: Informe Markdown generado ({md_path.stat().st_size:,} bytes)")
 
     return True
+
+
+def _generate_markdown_report(data: dict) -> str:
+    """Genera un informe Markdown completo desde los datos JSON del reporte."""
+    lines = []
+    url = data.get("url", "?")
+    domain = urlparse(url).hostname or url
+
+    lines.append(f"# Diagnostico de Seguridad Frontend — {domain}")
+    lines.append("")
+    lines.append(f"**Objetivo:** {url}")
+    lines.append(f"**Fecha:** {data.get('fecha', '?')}")
+    lines.append(f"**Tipo:** {data.get('tipo', 'Analisis estatico de codigo frontend')}")
+    lines.append(f"**Alcance:** {data.get('alcance', 'Codigo descargado del sitio')}")
+    lines.append("")
+
+    # Estadisticas
+    stats = data.get("estadisticas", {})
+    if stats:
+        lines.append("## Estadisticas")
+        lines.append("")
+        lines.append(f"| Metrica | Valor |")
+        lines.append(f"|---------|-------|")
+        for k, v in stats.items():
+            label = k.replace("_", " ").capitalize()
+            lines.append(f"| {label} | {v} |")
+        lines.append("")
+
+    # Resumen ejecutivo
+    resumen = data.get("resumen_ejecutivo", "")
+    if resumen:
+        lines.append("## Resumen Ejecutivo")
+        lines.append("")
+        lines.append(resumen)
+        lines.append("")
+
+    # Tabla de hallazgos
+    hallazgos = data.get("hallazgos", [])
+    if hallazgos:
+        lines.append("## Clasificacion de Hallazgos")
+        lines.append("")
+        lines.append("| # | Hallazgo | Severidad | CVSS | CWE |")
+        lines.append("|---|----------|-----------|------|-----|")
+        for h in hallazgos:
+            lines.append(f"| {h.get('id', '?')} | {h.get('titulo', '?')} | **{h.get('severidad', '?')}** | {h.get('cvss_v3_1', '?')} | {h.get('cwe', '?')} |")
+        lines.append("")
+
+        # Detalle de cada hallazgo
+        for h in hallazgos:
+            lines.append(f"---")
+            lines.append("")
+            lines.append(f"## Hallazgo {h.get('id', '?')}: {h.get('titulo', '?')}")
+            lines.append("")
+            lines.append(f"**Severidad:** {h.get('severidad', '?')}")
+            lines.append(f"**CVSS v3.1:** {h.get('cvss_v3_1', '?')}")
+            lines.append(f"**CWE:** {h.get('cwe', '?')}")
+            lines.append("")
+
+            if h.get("descripcion"):
+                lines.append("### Descripcion")
+                lines.append("")
+                lines.append(h["descripcion"])
+                lines.append("")
+
+            if h.get("impacto"):
+                lines.append("### Impacto")
+                lines.append("")
+                lines.append(h["impacto"])
+                lines.append("")
+
+            evidencia = h.get("evidencia", {})
+            if evidencia:
+                lines.append("### Evidencia")
+                lines.append("")
+                if isinstance(evidencia, dict):
+                    archivo = evidencia.get("archivo", "?")
+                    linea = evidencia.get("linea", "?")
+                    codigo = evidencia.get("codigo", "")
+                    contexto = evidencia.get("contexto", "")
+                    lines.append(f"**Archivo:** `{archivo}` (linea {linea})")
+                    lines.append("")
+                    if codigo:
+                        lines.append("```javascript")
+                        lines.append(codigo)
+                        lines.append("```")
+                        lines.append("")
+                    if contexto:
+                        lines.append(f"**Contexto:** {contexto}")
+                        lines.append("")
+                else:
+                    lines.append(str(evidencia))
+                    lines.append("")
+
+            if h.get("pasos_reproduccion"):
+                lines.append("### Pasos de Reproduccion")
+                lines.append("")
+                lines.append(h["pasos_reproduccion"])
+                lines.append("")
+
+            if h.get("console_instrumentation"):
+                lines.append("### Prueba de Concepto (PoC)")
+                lines.append("")
+                lines.append("Copiar y pegar en la consola del navegador:")
+                lines.append("")
+                lines.append("```javascript")
+                lines.append(h["console_instrumentation"])
+                lines.append("```")
+                lines.append("")
+
+            if h.get("recomendaciones"):
+                lines.append("### Recomendaciones")
+                lines.append("")
+                lines.append(h["recomendaciones"])
+                lines.append("")
+
+    # Librerias
+    librerias = data.get("librerias", [])
+    if librerias:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Apendice A: Inventario de Librerias")
+        lines.append("")
+        lines.append("| Libreria | Version | CVEs | En uso | Nota |")
+        lines.append("|----------|---------|------|--------|------|")
+        for lib in librerias:
+            cves = ", ".join(lib.get("cves", [])) or "—"
+            en_uso = "Si" if lib.get("funciones_afectadas_en_uso") else "No"
+            nota = lib.get("nota", "")
+            lines.append(f"| {lib.get('nombre', '?')} | {lib.get('version', '?')} | {cves} | {en_uso} | {nota} |")
+        lines.append("")
+
+    # Suite de instrumentacion
+    suite = data.get("console_instrumentation", "")
+    if suite:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Apendice B: Suite de Instrumentacion")
+        lines.append("")
+        lines.append("Suite completa de PoCs — copiar y pegar en la consola del navegador:")
+        lines.append("")
+        lines.append("```javascript")
+        lines.append(suite)
+        lines.append("```")
+        lines.append("")
+
+    # Archivos analizados
+    archivos = data.get("archivos_analizados", [])
+    if archivos:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Apendice C: Archivos Analizados")
+        lines.append("")
+        lines.append("| Archivo | Tipo | Lineas | Descripcion |")
+        lines.append("|---------|------|--------|-------------|")
+        for a in archivos:
+            lines.append(f"| `{a.get('archivo', '?')}` | {a.get('tipo', '?')} | {a.get('lineas', '?')} | {a.get('descripcion', '')} |")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("")
+    lines.append("*Generado por [WebAudit](https://github.com/openbashok/webaudit) — Analisis estatico de codigo fuente frontend.*")
+    lines.append("")
+
+    return "\n".join(lines)
 
 
 # --- Health check -------------------------------------------------------------
@@ -536,7 +716,18 @@ def run_audit(url: str, model: str, budget: float, max_turns: int,
     # --- Resumen ---
     print("\n" + "=" * 60)
     print("[webaudit] Analisis completo.")
-    print(f"\n[webaudit] Archivos en {project_dir}:")
+
+    # Mostrar reportes generados
+    report_json = project_dir / "webaudit_report.json"
+    report_md = project_dir / "webaudit_report.md"
+
+    if report_json.is_file():
+        print(f"\n[webaudit] Reportes:")
+        print(f"  JSON: {report_json} ({report_json.stat().st_size:,} bytes)")
+    if report_md.is_file():
+        print(f"  Markdown: {report_md} ({report_md.stat().st_size:,} bytes)")
+
+    print(f"\n[webaudit] Todos los archivos en {project_dir}:")
     for f in sorted(project_dir.rglob("*")):
         if f.is_file() and ".git" not in f.parts:
             size = f.stat().st_size
