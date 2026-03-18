@@ -19,6 +19,28 @@ from urllib.parse import urlparse
 
 import yaml
 
+# --- Prompt del usuario (lo que le pedimos al agente) -------------------------
+
+USER_PROMPT = """\
+Analiza el sitio: {url}
+
+IMPORTANTE — Antes de empezar el analisis de seguridad, hace un reconocimiento
+completo del codigo descargado. Esto es equivalente a un /init:
+
+1. Descarga el sitio completo con wget segun las instrucciones de la Fase 1.
+2. Usa Glob para listar TODOS los archivos descargados (JS, HTML, CSS, JSON, etc.).
+3. Lee los archivos JavaScript principales — tanto librerias como codigo propio.
+4. Lee los HTML principales para entender la estructura de la app.
+5. Arma un mapa mental de la aplicacion: que framework usa, que endpoints consume,
+   como maneja autenticacion, que librerias tiene y en que version.
+
+Recien despues de tener este panorama completo, procede con las Fases 3-5
+(analisis de seguridad, PoCs, e informe).
+
+No te saltees el reconocimiento. Si no entendes bien el codigo primero, vas a
+generar falsos positivos o te vas a perder vulnerabilidades reales.
+"""
+
 # --- Configuracion -----------------------------------------------------------
 
 CONFIG_PATHS = [
@@ -226,7 +248,7 @@ async def run_audit(url: str, model: str, budget: float, max_turns: int,
     print("-" * 60)
 
     async for message in query(
-        prompt=f"Analiza el sitio: {url}",
+        prompt=USER_PROMPT.format(url=url),
         options=ClaudeAgentOptions(
             system_prompt=system_prompt,
             model=model,
