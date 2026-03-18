@@ -194,6 +194,16 @@ Requisitos del sniffer:
 - Comentarios en el codigo explicando que hookea y por que
 - NO debe romper la funcionalidad del sitio
 
+Requisitos de PERSISTENCIA (obligatorio):
+- **Guardar el log en localStorage** bajo la key `__webaudit_sniffer_log`. Cada nueva entrada se persiste inmediatamente (no solo al cerrar). Al iniciar, si existe log previo, restaurarlo y mostrar las entradas anteriores en el panel con un separador visual "--- Session restored ---".
+- **Guardar el estado del panel** (minimizado/maximizado, pausado/activo, posicion) en localStorage key `__webaudit_sniffer_state` para que al re-inyectar el sniffer en otra pagina se mantenga la configuracion.
+- Boton "Clear" debe borrar tanto el panel como el localStorage.
+
+Requisitos de NAVEGACION (obligatorio):
+- **Interceptar navegacion con `beforeunload`**: cuando el usuario hace click en un link o el sitio intenta cambiar de pagina, mostrar el dialogo de confirmacion del navegador ("Changes you made may not be lost") para dar tiempo a revisar o exportar el log.
+- **Interceptar clicks en links**: agregar un event listener delegado en `document` para clicks en `<a>` tags. Si el sniffer tiene entradas en el log, mostrar un mini-dialogo (no alert, un div flotante) preguntando: "Sniffer has N entries. Export before leaving?" con botones [Export & Go] [Go] [Cancel]. [Export & Go] descarga el JSON y navega, [Go] navega directo, [Cancel] cancela la navegacion.
+- **Auto-persistir antes de navegar**: en el handler de `beforeunload`, forzar un guardado final al localStorage para que no se pierda nada.
+
 Ejemplo de estructura:
 ```javascript
 (function(){
