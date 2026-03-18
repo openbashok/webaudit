@@ -67,7 +67,7 @@ DEFAULTS = {
     "default_model": "claude-sonnet-4-6",
     "default_budget_usd": 5.0,
     "default_max_turns": 50,
-    "work_dir": "/tmp/webaudit",
+    "work_dir": str(Path.home() / "webaudit"),
 }
 
 
@@ -507,6 +507,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("-b", "--budget", type=float, help="Limite de gasto en USD")
     scan.add_argument("-t", "--max-turns", type=int, help="Maximo de turnos del agente")
     scan.add_argument("-o", "--output-dir", help="Directorio de salida (default: auto)")
+    scan.add_argument("-w", "--work-dir", help="Directorio base de trabajo (default: ~/webaudit)")
     scan.add_argument("-d", "--debug", action="store_true", help="Modo debug")
 
     check = sub.add_parser("check", help="Verificar salud del sistema")
@@ -549,7 +550,8 @@ def main():
     model = args.model or config["default_model"]
     budget = args.budget if args.budget is not None else config["default_budget_usd"]
     max_turns = args.max_turns if args.max_turns is not None else config["default_max_turns"]
-    project_dir = resolve_project_dir(config["work_dir"], url, args.output_dir, debug)
+    work_dir = args.work_dir or config["work_dir"]
+    project_dir = resolve_project_dir(work_dir, url, args.output_dir, debug)
 
     anyio.run(run_audit, url, model, budget, max_turns, project_dir, debug)
 
