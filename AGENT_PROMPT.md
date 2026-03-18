@@ -224,7 +224,51 @@ Ejemplo de estructura:
 })();
 ```
 
-### Paso 9: Informe
+### Paso 9: Analisis de Criptografia de Requests (OBLIGATORIO)
+
+Si durante la lectura del codigo (Pasos 2-3) detectaste funciones criptograficas que cifran o descifran requests, datos de formularios, tokens u otros datos transmitidos al servidor, genera un analisis dedicado profundo.
+
+#### 9.1 Deteccion
+
+Busca con Grep y en los archivos ya leidos:
+- CryptoJS (AES, DES, TripleDES, RC4, Rabbit, MD5, SHA1, SHA256, HmacSHA256, etc.)
+- Web Crypto API (crypto.subtle.encrypt, crypto.subtle.decrypt, crypto.subtle.sign, crypto.subtle.digest)
+- forge, sjcl, tweetnacl, libsodium u otras librerias crypto
+- Funciones custom de cifrado/ofuscacion (XOR, base64 encode/decode de datos sensibles, rot13, etc.)
+- Patrones de encrypt/decrypt en wrappers de fetch o XMLHttpRequest
+
+#### 9.2 Analisis del esquema
+
+Para CADA esquema criptografico encontrado, documenta:
+
+1. **Que se cifra**: datos de login, tokens, parametros de API, payloads completos, etc.
+2. **Algoritmo usado**: AES-CBC, AES-GCM, RSA, etc. (o custom)
+3. **Modo de operacion**: CBC, ECB, GCM, CTR — y si usa IV/nonce
+4. **Origen de la clave**: hardcodeada, derivada (PBKDF2, scrypt), recibida del server, generada cliente
+5. **Flujo completo**: paso a paso como se cifra un request (ej: "se toma el JSON del form, se serializa, se cifra con AES-CBC usando key hardcodeada en config.js:23, se envia como base64 en el campo 'data' del POST a /api/login")
+6. **IV/Nonce**: es fijo, random, predecible, reutilizado?
+7. **Padding**: PKCS7, zero-padding, custom?
+8. **Debilidades identificadas**: clave expuesta en cliente, IV fijo, ECB mode, algoritmo debil, key derivation debil, etc.
+
+#### 9.3 Impacto
+
+Explica que puede hacer un atacante con este conocimiento:
+- Puede descifrar requests capturados?
+- Puede forjar requests cifrados validos?
+- Puede hacer replay attacks?
+- Puede extraer datos sensibles del trafico?
+
+#### 9.4 Instrumentacion crypto
+
+Genera codigo JavaScript inyectable en consola que:
+- Hookea las funciones de cifrado/descifrado detectadas
+- Muestra en un panel flotante: datos ANTES de cifrar (plaintext), datos DESPUES de cifrar (ciphertext), la clave usada, el IV, y el resultado descifrado
+- Permite al pentester ver en tiempo real todo lo que la app cifra y descifra
+- Incluye funcion para descifrar manualmente un ciphertext dado (usando la clave extraida)
+
+Si NO se detecta criptografia de requests, el campo `crypto_analysis` del JSON debe ser `null` y se omite del informe.
+
+### Paso 10: Informe
 
 Guarda el resultado como `webaudit_report.json` usando Write. La estructura:
 
@@ -267,6 +311,28 @@ Guarda el resultado como `webaudit_report.json` usando Write. La estructura:
   ],
   "console_instrumentation": "(function(){ /* Suite completa: panel inyectable con todos los PoCs */ })();",
   "application_sniffer": "(function(){ /* Sniffer personalizado: panel flotante que monitorea variables, storage, fetch, forms, etc. especificos de esta app */ })();",
+  "crypto_analysis": {
+    "detected": true,
+    "schemes": [
+      {
+        "name": "AES-CBC encryption of login requests",
+        "files": ["site/js/crypto-utils.js", "site/js/login.js"],
+        "algorithm": "AES-CBC",
+        "key_source": "Hardcoded in config.js line 15: var encKey = 'MySecretKey12345'",
+        "iv": "Fixed IV: '0000000000000000' (16 null bytes)",
+        "what_is_encrypted": "Login credentials (username + password) before POST to /api/auth",
+        "flow": "1. User submits login form\n2. login.js:34 calls encryptData(JSON.stringify({user, pass}))\n3. crypto-utils.js:12 encrypts with CryptoJS.AES.encrypt(data, key, {iv: iv, mode: CryptoJS.mode.CBC})\n4. Result is base64-encoded and sent as POST body field 'payload'\n5. Server presumably decrypts with same key",
+        "weaknesses": [
+          "Key hardcoded in client-side JavaScript — anyone can extract it",
+          "Fixed IV defeats CBC semantic security — identical plaintexts produce identical ciphertexts",
+          "No authentication (CBC without HMAC) — vulnerable to padding oracle and bit-flipping attacks"
+        ],
+        "impact": "An attacker can: decrypt any captured login request, forge valid encrypted requests, perform replay attacks",
+        "console_instrumentation": "(function(){ /* JS that hooks CryptoJS.AES.encrypt/decrypt showing plaintext, key, IV, ciphertext */ })();"
+      }
+    ],
+    "summary": "The application uses client-side AES-CBC encryption with a hardcoded key to 'protect' login credentials. This provides zero actual security since the key is exposed in the JavaScript source."
+  },
   "librerias": [
     {
       "nombre": "jQuery",
@@ -313,4 +379,6 @@ El campo `informe_markdown` debe contener el informe completo legible con:
 7. **CONSOLE_INSTRUMENTATION ES LO MAS IMPORTANTE.** Los PoCs deben ser herramientas utiles para un pentester, no demos academicas. La suite final debe ser un panel inyectable funcional.
 
 8. **APPLICATION_SNIFFER ES OBLIGATORIO.** Genera un sniffer a medida de la aplicacion. No generico — basado en las variables, APIs y storage que encontraste al leer el codigo. El pentester debe poder pegar el sniffer en la consola y ver en tiempo real todo lo que la app hace con datos sensibles.
+
+9. **CRYPTO_ANALYSIS: ANALIZA LA CRIPTOGRAFIA.** Si la app cifra/descifra requests, tokens o datos, documenta el esquema completo (algoritmo, clave, IV, flujo, debilidades) y genera JS inyectable para observar encrypt/decrypt en tiempo real. Si no hay crypto, pon `null`.
 ```

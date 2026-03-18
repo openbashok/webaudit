@@ -50,7 +50,11 @@ INSTRUCTIONS — follow the system prompt steps in order:
     a self-contained IIFE that when pasted in the browser console shows a floating panel
     monitoring in real-time: global variables, localStorage/sessionStorage, cookies, fetch/XHR,
     form submissions, postMessage. Only hook what THIS app actually uses — not generic.
-11. Save webaudit_report.json with Write.
+11. If the app encrypts/decrypts requests or data (CryptoJS, Web Crypto API, forge, custom XOR, etc.),
+    generate "crypto_analysis" with: detected schemes, algorithm, key source, IV, full flow,
+    weaknesses, impact, and console_instrumentation JS to hook encrypt/decrypt in real-time.
+    If no crypto found, set "crypto_analysis" to null.
+12. Save webaudit_report.json with Write.
 
 CRITICAL: This is STATIC SOURCE CODE ANALYSIS, not a network pentest.
 Your job is to READ JavaScript code and find vulnerabilities IN THE CODE.
@@ -471,6 +475,15 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
         else:
             print(f"[audit] WARN: No se genero application_sniffer")
 
+        crypto = report_data.get("crypto_analysis")
+        if crypto and isinstance(crypto, dict) and crypto.get("detected"):
+            n_schemes = len(crypto.get("schemes", []))
+            print(f"[audit] Crypto analysis: {n_schemes} scheme(s) detected")
+        elif crypto is None:
+            print(f"[audit] Crypto analysis: no client-side encryption detected")
+        else:
+            print(f"[audit] Crypto analysis: present but no schemes detected")
+
     # --- Generar reporte Markdown (siempre desde JSON, no del agente) ---
     if report_data:
         md_path = project_dir / "webaudit_report.md"
@@ -517,6 +530,20 @@ MD_LABELS = {
         "no": "No",
         "appendix_suite": "Appendix B: Instrumentation Suite",
         "suite_instructions": "Complete PoC suite — copy and paste in the browser console:",
+        "appendix_crypto": "Cryptographic Analysis",
+        "crypto_summary": "Summary",
+        "crypto_scheme": "Encryption Scheme",
+        "crypto_algorithm": "Algorithm",
+        "crypto_key_source": "Key Source",
+        "crypto_iv": "IV / Nonce",
+        "crypto_what": "What is Encrypted",
+        "crypto_flow": "Encryption Flow",
+        "crypto_weaknesses": "Weaknesses",
+        "crypto_impact": "Impact",
+        "crypto_instrumentation": "Crypto Instrumentation",
+        "crypto_instrumentation_instructions": "Copy and paste in the browser console to intercept encryption/decryption in real-time:",
+        "crypto_files": "Files",
+        "crypto_not_detected": "No client-side request encryption/decryption was detected in the application code.",
         "appendix_sniffer": "Appendix C: Application Sniffer",
         "sniffer_instructions": "Custom application sniffer — copy and paste in the browser console to monitor the application's behavior in real-time (variables, storage, network calls, forms, cookies):",
         "appendix_files": "Appendix D: Analyzed Files",
@@ -559,6 +586,20 @@ MD_LABELS = {
         "no": "No",
         "appendix_suite": "Apendice B: Suite de Instrumentacion",
         "suite_instructions": "Suite completa de PoCs — copiar y pegar en la consola del navegador:",
+        "appendix_crypto": "Analisis Criptografico",
+        "crypto_summary": "Resumen",
+        "crypto_scheme": "Esquema de Cifrado",
+        "crypto_algorithm": "Algoritmo",
+        "crypto_key_source": "Origen de la Clave",
+        "crypto_iv": "IV / Nonce",
+        "crypto_what": "Que se Cifra",
+        "crypto_flow": "Flujo de Cifrado",
+        "crypto_weaknesses": "Debilidades",
+        "crypto_impact": "Impacto",
+        "crypto_instrumentation": "Instrumentacion Crypto",
+        "crypto_instrumentation_instructions": "Copiar y pegar en la consola del navegador para interceptar cifrado/descifrado en tiempo real:",
+        "crypto_files": "Archivos",
+        "crypto_not_detected": "No se detecto cifrado/descifrado de requests del lado del cliente en el codigo de la aplicacion.",
         "appendix_sniffer": "Apendice C: Sniffer Aplicativo",
         "sniffer_instructions": "Sniffer personalizado de la aplicacion — copiar y pegar en la consola del navegador para monitorear en tiempo real el comportamiento de la aplicacion (variables, storage, llamadas de red, formularios, cookies):",
         "appendix_files": "Apendice D: Archivos Analizados",
@@ -721,6 +762,80 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
                 lines.append(f"### {L['recommendations']}")
                 lines.append("")
                 lines.append(recom)
+                lines.append("")
+
+    # Analisis criptografico
+    crypto = data.get("crypto_analysis")
+    if crypto and isinstance(crypto, dict) and crypto.get("detected"):
+        lines.append("---")
+        lines.append("")
+        lines.append(f"## {L['appendix_crypto']}")
+        lines.append("")
+
+        crypto_summary = crypto.get("summary", "")
+        if crypto_summary:
+            lines.append(f"### {L['crypto_summary']}")
+            lines.append("")
+            lines.append(crypto_summary)
+            lines.append("")
+
+        schemes = crypto.get("schemes", [])
+        for i, scheme in enumerate(schemes, 1):
+            name = scheme.get("name", f"Scheme {i}")
+            lines.append(f"### {L['crypto_scheme']} {i}: {name}")
+            lines.append("")
+
+            if scheme.get("files"):
+                files_list = scheme["files"]
+                converted = []
+                for f in files_list:
+                    if f.startswith(("site/", "./site/")):
+                        converted.append(f"`{_local_path_to_url(f, url)}`")
+                    else:
+                        converted.append(f"`{f}`")
+                lines.append(f"**{L['crypto_files']}:** {', '.join(converted)}")
+                lines.append("")
+
+            for field, label_key in [
+                ("algorithm", "crypto_algorithm"),
+                ("key_source", "crypto_key_source"),
+                ("iv", "crypto_iv"),
+                ("what_is_encrypted", "crypto_what"),
+            ]:
+                val = scheme.get(field, "")
+                if val:
+                    lines.append(f"**{L[label_key]}:** {val}")
+                    lines.append("")
+
+            flow = scheme.get("flow", "")
+            if flow:
+                lines.append(f"**{L['crypto_flow']}:**")
+                lines.append("")
+                lines.append(flow)
+                lines.append("")
+
+            weaknesses = scheme.get("weaknesses", [])
+            if weaknesses:
+                lines.append(f"**{L['crypto_weaknesses']}:**")
+                lines.append("")
+                for w in weaknesses:
+                    lines.append(f"- {w}")
+                lines.append("")
+
+            impact = scheme.get("impact", "")
+            if impact:
+                lines.append(f"**{L['crypto_impact']}:** {impact}")
+                lines.append("")
+
+            ci = scheme.get("console_instrumentation", "")
+            if ci:
+                lines.append(f"### {L['crypto_instrumentation']}")
+                lines.append("")
+                lines.append(L['crypto_instrumentation_instructions'])
+                lines.append("")
+                lines.append("```javascript")
+                lines.append(ci)
+                lines.append("```")
                 lines.append("")
 
     # Librerias
