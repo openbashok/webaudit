@@ -3,14 +3,17 @@
 # install.sh — Instalador de WebAudit
 #
 # Uso:
-#   curl -sL <raw-url-de-install.sh> | bash
+#   curl -sL https://raw.githubusercontent.com/openbashok/webaudit/main/install.sh | bash
 #   o bien: ./install.sh
+#
+# No requiere sudo. Instala en ~/.local/share/webaudit con symlink en ~/.local/bin.
 #
 set -euo pipefail
 
 REPO="openbashok/webaudit"
-INSTALL_DIR="${WEBAUDIT_INSTALL_DIR:-/usr/local/share/webaudit}"
-BIN_LINK="/usr/local/bin/webaudit"
+INSTALL_DIR="${WEBAUDIT_INSTALL_DIR:-${HOME}/.local/share/webaudit}"
+BIN_DIR="${HOME}/.local/bin"
+BIN_LINK="${BIN_DIR}/webaudit"
 CONFIG_DIR="${HOME}/.config/webaudit"
 
 echo "=== WebAudit Installer ==="
@@ -27,19 +30,29 @@ if [ -d "$INSTALL_DIR" ]; then
     git -C "$INSTALL_DIR" pull --ff-only
 else
     echo "Clonando repositorio en $INSTALL_DIR ..."
-    sudo mkdir -p "$(dirname "$INSTALL_DIR")"
-    sudo git clone "https://github.com/${REPO}.git" "$INSTALL_DIR"
-    sudo chown -R "$(whoami)" "$INSTALL_DIR"
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    git clone "https://github.com/${REPO}.git" "$INSTALL_DIR"
 fi
 
 # --- Instalar dependencias Python --------------------------------------------
 echo "Instalando dependencias Python ..."
-pip3 install --upgrade -r "${INSTALL_DIR}/requirements.txt"
+pip3 install --user --upgrade -r "${INSTALL_DIR}/requirements.txt"
 
 # --- Crear symlink al binario -------------------------------------------------
-echo "Creando enlace simbolico: $BIN_LINK -> ${INSTALL_DIR}/webaudit.py"
-sudo ln -sf "${INSTALL_DIR}/webaudit.py" "$BIN_LINK"
-sudo chmod +x "${INSTALL_DIR}/webaudit.py"
+mkdir -p "$BIN_DIR"
+chmod +x "${INSTALL_DIR}/webaudit.py"
+ln -sf "${INSTALL_DIR}/webaudit.py" "$BIN_LINK"
+echo "Enlace: $BIN_LINK -> ${INSTALL_DIR}/webaudit.py"
+
+# --- Verificar que ~/.local/bin este en PATH ----------------------------------
+if ! echo "$PATH" | tr ':' '\n' | grep -qx "$BIN_DIR"; then
+    echo ""
+    echo "IMPORTANTE: $BIN_DIR no esta en tu PATH."
+    echo "Agrega esto a tu ~/.bashrc o ~/.zshrc:"
+    echo ""
+    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo ""
+fi
 
 # --- Crear archivo de configuracion si no existe ------------------------------
 mkdir -p "$CONFIG_DIR"
