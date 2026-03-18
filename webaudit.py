@@ -38,13 +38,26 @@ INSTRUCCIONES — segui los pasos del system prompt en orden:
 5. Usa Grep para buscar patrones de vulnerabilidad (claves hardcodeadas, innerHTML, eval, localStorage, fetch, postMessage, etc.)
 6. Para librerias con version, busca CVEs con WebSearch y verifica si las funciones afectadas se usan.
 7. Verifica cada hallazgo potencial — vuelve a leer el contexto antes de confirmar.
-8. Genera PoCs JavaScript inyectables para hallazgos Alta/Critica.
-9. Genera la suite completa (panel inyectable con todos los PoCs).
+8. Para CADA hallazgo, genera un PoC JavaScript funcional en el campo "console_instrumentation".
+9. Genera la suite completa en el campo "console_instrumentation" de la raiz del JSON.
 10. Guarda webaudit_report.json con Write.
 
 CRITICO: Esto es analisis ESTATICO DE CODIGO FUENTE, no un pentest de red.
 Tu trabajo es LEER el codigo JavaScript y encontrar vulnerabilidades EN EL CODIGO.
 No revises headers HTTP ni hagas pruebas de red. Lee archivos, busca patrones, analiza flujos de datos.
+
+OBLIGATORIO — CONSOLE_INSTRUMENTATION:
+Cada hallazgo DEBE tener un campo "console_instrumentation" con codigo JavaScript
+funcional que se pueda copiar y pegar en la consola del navegador para demostrar
+la vulnerabilidad. No dejes este campo vacio ni lo omitas. El PoC debe:
+- Ser autocontenido (copiar-pegar en DevTools > Console)
+- Mostrar evidencia visible (console.log, alert, o UI modificada)
+- Tener comentarios explicando que hace y que demuestra
+- Ejemplo minimo: (function(){{ console.log('[PoC] Token encontrado:', localStorage.getItem('token')); }})();
+
+Ademas, el campo "console_instrumentation" en la RAIZ del JSON debe contener una
+SUITE COMPLETA: un unico bloque JS que al pegarlo en la consola cree un panel
+flotante en la pagina con botones para ejecutar cada PoC individualmente.
 """
 
 # --- Configuracion -----------------------------------------------------------
@@ -415,17 +428,30 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
             txt_path.write_text(output, encoding="utf-8")
             print(f"[audit] Resultado guardado como texto: {txt_path}")
 
-    # --- Generar reporte Markdown ---
+    # --- Validar y reportar PoCs ---
+    if report_data:
+        hallazgos = report_data.get("hallazgos", [])
+        total = len(hallazgos)
+        con_poc = sum(1 for h in hallazgos if h.get("console_instrumentation"))
+        sin_poc = total - con_poc
+        suite = report_data.get("console_instrumentation", "")
+
+        print(f"[audit] Hallazgos: {total} total, {con_poc} con PoC, {sin_poc} sin PoC")
+        if suite:
+            print(f"[audit] Suite de instrumentacion: {len(suite):,} chars")
+        else:
+            print(f"[audit] WARN: No se genero suite de instrumentacion (campo console_instrumentation raiz)")
+
+        if sin_poc > 0:
+            print(f"[audit] WARN: {sin_poc} hallazgos sin console_instrumentation:")
+            for h in hallazgos:
+                if not h.get("console_instrumentation"):
+                    print(f"         - #{h.get('id', '?')}: {h.get('titulo', '?')}")
+
+    # --- Generar reporte Markdown (siempre desde JSON, no del agente) ---
     if report_data:
         md_path = project_dir / "webaudit_report.md"
-
-        # Si el agente incluyó informe_markdown, usarlo como base
-        md_content = report_data.get("informe_markdown", "")
-
-        if not md_content:
-            # Generar Markdown desde los datos JSON
-            md_content = _generate_markdown_report(report_data)
-
+        md_content = _generate_markdown_report(report_data)
         md_path.write_text(md_content, encoding="utf-8")
         print(f"[audit] OK: Informe Markdown generado ({md_path.stat().st_size:,} bytes)")
 
