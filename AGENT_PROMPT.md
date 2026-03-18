@@ -168,7 +168,63 @@ Para cada hallazgo de severidad Alta o Critica:
 
 Al final, crea una suite completa: un JS inyectable que genera un panel interactivo en el navegador agrupando todos los PoCs con controles para ejecutarlos selectivamente.
 
-### Paso 8: Informe
+### Paso 8: Application Sniffer (OBLIGATORIO)
+
+Genera un JavaScript sniffer personalizado para esta aplicacion especifica. El sniffer debe ser un IIFE autocontenido que al pegarse en la consola del navegador crea un panel flotante de monitoreo en tiempo real.
+
+Basandote en las variables, funciones y APIs que encontraste al leer el codigo, el sniffer debe interceptar:
+
+1. **Variables globales de la app**: Hookea las que encontraste en `window.*` — muestra nombre, valor actual y cambios en tiempo real via Object.defineProperty o Proxy.
+2. **localStorage/sessionStorage**: Intercepta setItem/getItem/removeItem con monkeypatching — muestra key, value, operacion.
+3. **Cookies**: Intercepta escrituras a document.cookie — muestra nombre, valor, flags.
+4. **fetch/XMLHttpRequest**: Intercepta llamadas de red — muestra method, URL, headers, body, response status.
+5. **Formularios**: Intercepta submits — muestra action, method, todos los campos y valores.
+6. **postMessage**: Escucha eventos message — muestra origin, data.
+7. **Eventos de DOM sensibles**: MutationObserver en campos password, hidden inputs, tokens.
+
+Requisitos del sniffer:
+- IIFE autocontenido, copiar-pegar en consola
+- Panel flotante draggable con log scrolleable
+- Cada entrada del log con timestamp, categoria (coloreada), y detalle
+- Boton para limpiar el log
+- Boton para exportar el log como JSON
+- Boton para pausar/reanudar el monitoreo
+- Boton para minimizar/maximizar el panel
+- Solo hookear lo que REALMENTE usa la aplicacion (no generico)
+- Comentarios en el codigo explicando que hookea y por que
+- NO debe romper la funcionalidad del sitio
+
+Ejemplo de estructura:
+```javascript
+(function(){
+  // === WebAudit Application Sniffer ===
+  // Tailored for: https://target.example.com
+  // Variables monitored: userToken, apiKey, sessionData (found in app.js)
+  // APIs intercepted: fetch to /api/*, localStorage for session_token
+
+  var panel = document.createElement('div');
+  // ... panel UI setup ...
+
+  // Hook: localStorage (found in login.js:23, app.js:45)
+  var origSetItem = Storage.prototype.setItem;
+  Storage.prototype.setItem = function(key, value) {
+    logEntry('storage', 'SET ' + key + ' = ' + value);
+    return origSetItem.apply(this, arguments);
+  };
+
+  // Hook: fetch (found in api.js:12, dashboard.js:78)
+  var origFetch = window.fetch;
+  window.fetch = function(url, opts) {
+    logEntry('network', (opts&&opts.method||'GET') + ' ' + url);
+    return origFetch.apply(this, arguments);
+  };
+
+  // Hook: Global var userToken (found in auth.js:5)
+  // ... Object.defineProperty or Proxy ...
+})();
+```
+
+### Paso 9: Informe
 
 Guarda el resultado como `webaudit_report.json` usando Write. La estructura:
 
@@ -210,6 +266,7 @@ Guarda el resultado como `webaudit_report.json` usando Write. La estructura:
     }
   ],
   "console_instrumentation": "(function(){ /* Suite completa: panel inyectable con todos los PoCs */ })();",
+  "application_sniffer": "(function(){ /* Sniffer personalizado: panel flotante que monitorea variables, storage, fetch, forms, etc. especificos de esta app */ })();",
   "librerias": [
     {
       "nombre": "jQuery",
@@ -254,4 +311,6 @@ El campo `informe_markdown` debe contener el informe completo legible con:
 6. **DOCUMENTA TODO.** Archivo, linea, codigo, contexto. Otro analista debe poder reproducir tu trabajo.
 
 7. **CONSOLE_INSTRUMENTATION ES LO MAS IMPORTANTE.** Los PoCs deben ser herramientas utiles para un pentester, no demos academicas. La suite final debe ser un panel inyectable funcional.
+
+8. **APPLICATION_SNIFFER ES OBLIGATORIO.** Genera un sniffer a medida de la aplicacion. No generico — basado en las variables, APIs y storage que encontraste al leer el codigo. El pentester debe poder pegar el sniffer en la consola y ver en tiempo real todo lo que la app hace con datos sensibles.
 ```

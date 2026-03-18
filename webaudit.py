@@ -11,6 +11,7 @@ Flujo de 3 pasos (todo via claude CLI real, sin SDK):
 import sys
 import os
 import json
+import re
 import shutil
 import argparse
 import subprocess
@@ -44,7 +45,12 @@ INSTRUCTIONS — follow the system prompt steps in order:
 7. Verify each potential finding — re-read the context before confirming.
 8. For EACH finding, generate a functional JavaScript PoC in the "console_instrumentation" field.
 9. Generate the complete suite in the root "console_instrumentation" field.
-10. Save webaudit_report.json with Write.
+10. Generate the "application_sniffer" field: a CUSTOM JavaScript sniffer tailored to THIS app.
+    Based on the variables, APIs, storage keys, and functions you found in the code, create
+    a self-contained IIFE that when pasted in the browser console shows a floating panel
+    monitoring in real-time: global variables, localStorage/sessionStorage, cookies, fetch/XHR,
+    form submissions, postMessage. Only hook what THIS app actually uses — not generic.
+11. Save webaudit_report.json with Write.
 
 CRITICAL: This is STATIC SOURCE CODE ANALYSIS, not a network pentest.
 Your job is to READ JavaScript code and find vulnerabilities IN THE CODE.
@@ -459,6 +465,12 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
                 if not h.get("console_instrumentation"):
                     print(f"         - #{h.get('id', '?')}: {h.get('titulo', '?')}")
 
+        sniffer = report_data.get("application_sniffer", "")
+        if sniffer:
+            print(f"[audit] Application sniffer: {len(sniffer):,} chars")
+        else:
+            print(f"[audit] WARN: No se genero application_sniffer")
+
     # --- Generar reporte Markdown (siempre desde JSON, no del agente) ---
     if report_data:
         md_path = project_dir / "webaudit_report.md"
@@ -505,7 +517,9 @@ MD_LABELS = {
         "no": "No",
         "appendix_suite": "Appendix B: Instrumentation Suite",
         "suite_instructions": "Complete PoC suite — copy and paste in the browser console:",
-        "appendix_files": "Appendix C: Analyzed Files",
+        "appendix_sniffer": "Appendix C: Application Sniffer",
+        "sniffer_instructions": "Custom application sniffer — copy and paste in the browser console to monitor the application's behavior in real-time (variables, storage, network calls, forms, cookies):",
+        "appendix_files": "Appendix D: Analyzed Files",
         "file_col": "File",
         "type_col": "Type",
         "lines_col": "Lines",
@@ -545,7 +559,9 @@ MD_LABELS = {
         "no": "No",
         "appendix_suite": "Apendice B: Suite de Instrumentacion",
         "suite_instructions": "Suite completa de PoCs — copiar y pegar en la consola del navegador:",
-        "appendix_files": "Apendice C: Archivos Analizados",
+        "appendix_sniffer": "Apendice C: Sniffer Aplicativo",
+        "sniffer_instructions": "Sniffer personalizado de la aplicacion — copiar y pegar en la consola del navegador para monitorear en tiempo real el comportamiento de la aplicacion (variables, storage, llamadas de red, formularios, cookies):",
+        "appendix_files": "Apendice D: Archivos Analizados",
         "file_col": "Archivo",
         "type_col": "Tipo",
         "lines_col": "Lineas",
@@ -553,6 +569,35 @@ MD_LABELS = {
         "generated_by": "Generado por",
     },
 }
+
+
+def _local_path_to_url(path: str, target_url: str) -> str:
+    """Convert local file path like site/www.example.com/page/index.html to https://www.example.com/page/."""
+    parsed = urlparse(target_url)
+    scheme = parsed.scheme or "https"
+
+    # Strip site/ prefix
+    p = path
+    if p.startswith("site/"):
+        p = p[5:]
+    elif p.startswith("./site/"):
+        p = p[7:]
+
+    # The first path component should be the domain; strip it
+    parts = p.split("/", 1)
+    if len(parts) < 2:
+        return f"{scheme}://{p}"
+    domain_part = parts[0]
+    rest = parts[1]
+
+    # Strip trailing index.html / index.htm
+    rest = re.sub(r'index\.html?$', '', rest)
+
+    # Ensure trailing slash for directories
+    if rest and not rest.endswith("/") and "." not in rest.split("/")[-1]:
+        rest += "/"
+
+    return f"{scheme}://{domain_part}/{rest}"
 
 
 def _generate_markdown_report(data: dict, lang: str = "en") -> str:
@@ -635,7 +680,8 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
                 lines.append(f"### {L['evidence']}")
                 lines.append("")
                 if isinstance(evidencia, dict):
-                    archivo = evidencia.get("archivo", evidencia.get("file", "?"))
+                    archivo_raw = evidencia.get("archivo", evidencia.get("file", "?"))
+                    archivo = _local_path_to_url(archivo_raw, url) if archivo_raw.startswith(("site/", "./site/")) else archivo_raw
                     linea = evidencia.get("linea", evidencia.get("line", "?"))
                     codigo = evidencia.get("codigo", evidencia.get("code", ""))
                     contexto = evidencia.get("contexto", evidencia.get("context", ""))
@@ -709,6 +755,20 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
         lines.append("```")
         lines.append("")
 
+    # Application Sniffer
+    sniffer = data.get("application_sniffer", "")
+    if sniffer:
+        lines.append("---")
+        lines.append("")
+        lines.append(f"## {L['appendix_sniffer']}")
+        lines.append("")
+        lines.append(L['sniffer_instructions'])
+        lines.append("")
+        lines.append("```javascript")
+        lines.append(sniffer)
+        lines.append("```")
+        lines.append("")
+
     # Archivos analizados
     archivos = data.get("archivos_analizados", data.get("analyzed_files", []))
     if archivos:
@@ -719,7 +779,8 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
         lines.append(f"| {L['file_col']} | {L['type_col']} | {L['lines_col']} | {L['desc_col']} |")
         lines.append("|---------|------|--------|-------------|")
         for a in archivos:
-            archivo = a.get("archivo", a.get("file", "?"))
+            archivo_raw = a.get("archivo", a.get("file", "?"))
+            archivo = _local_path_to_url(archivo_raw, url) if archivo_raw.startswith(("site/", "./site/")) else archivo_raw
             tipo = a.get("tipo", a.get("type", "?"))
             lineas = a.get("lineas", a.get("lines", "?"))
             desc = a.get("descripcion", a.get("description", ""))
