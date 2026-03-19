@@ -1,5 +1,7 @@
 # WebAudit
 
+A project by [OpenBash](https://www.openbash.com).
+
 Autonomous frontend security reconnaissance agent powered by Claude. WebAudit downloads a target website, performs deep static analysis of its JavaScript/HTML source code, and produces two things: a professional security diagnostic, and a **custom toolkit** — a set of purpose-built tools tailored to the specific target, ready for the analyst to use in the dynamic testing phase.
 
 **The core idea:** a tool that generates tools. WebAudit reads every line of application JavaScript, maps the attack surface (endpoints, auth patterns, crypto schemes, data flows), identifies real vulnerabilities in context, and then turns that intelligence into ready-to-use instruments — Burp Suite plugins pre-loaded with the target's endpoints, console-injectable PoCs, a runtime sniffer tuned to the app's specific variables and APIs, and an operational briefing for follow-up work. The analyst receives not just a report, but an entire reconnaissance package.
