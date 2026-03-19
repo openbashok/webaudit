@@ -459,6 +459,38 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
             txt_path.write_text(output, encoding="utf-8")
             print(f"[audit] Resultado guardado como texto: {txt_path}")
 
+    # --- Normalizar estructura del JSON (el agente puede usar variantes) ---
+    if report_data:
+        # Si el agente wrappeo en report_metadata / report, aplanar
+        if "report_metadata" in report_data and "url" not in report_data:
+            meta = report_data.pop("report_metadata")
+            if isinstance(meta, dict):
+                for k, v in meta.items():
+                    if k not in report_data:
+                        report_data[k] = v
+        if "report" in report_data and isinstance(report_data["report"], dict) and "url" not in report_data:
+            inner = report_data.pop("report")
+            for k, v in inner.items():
+                if k not in report_data:
+                    report_data[k] = v
+
+        # Normalizar nombres de campos en/es (el agente puede usar ingles)
+        _ALIASES = {
+            "findings": "hallazgos",
+            "libraries": "librerias",
+            "analyzed_files": "archivos_analizados",
+            "executive_summary": "resumen_ejecutivo",
+            "statistics": "estadisticas",
+            "date": "fecha",
+            "scope": "alcance",
+            "type": "tipo",
+            "target": "url",
+            "title": "titulo_reporte",
+        }
+        for en_key, es_key in _ALIASES.items():
+            if en_key in report_data and es_key not in report_data:
+                report_data[es_key] = report_data[en_key]
+
     # --- Validar y reportar PoCs ---
     if report_data:
         hallazgos = report_data.get("hallazgos", [])
@@ -683,7 +715,7 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
     """Genera un informe Markdown completo desde los datos JSON del reporte."""
     L = MD_LABELS.get(lang, MD_LABELS["en"])
     lines = []
-    url = data.get("url", "?")
+    url = data.get("url", data.get("target", "?"))
     domain = urlparse(url).hostname or url
 
     lines.append(f"# {L['title']} — {domain}")
@@ -887,7 +919,7 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
         lines.append("|----------|---------|------|--------|------|")
         for lib in librerias:
             cves_list = lib.get("cves", [])
-            cves = ", ".join(cves_list) if cves_list else "—"
+            cves = ", ".join(str(c) if not isinstance(c, dict) else c.get("id", c.get("cve", str(c))) for c in cves_list) if cves_list else "—"
             en_uso = L["yes"] if lib.get("funciones_afectadas_en_uso", lib.get("affected_functions_in_use")) else L["no"]
             nota = lib.get("nota", lib.get("note", ""))
             nombre = lib.get("nombre", lib.get("name", "?"))
