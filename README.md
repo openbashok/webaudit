@@ -26,6 +26,7 @@ Each audit generates a project directory with:
 |------|-------------|
 | `webaudit_report.json` | Structured findings with evidence, PoCs, and all generated tooling |
 | `webaudit_report.md` | Professional Markdown report ready for client delivery |
+| `AGENT.md` | Operational briefing for follow-up agents or complementary tools |
 | `webaudit_burp_auth.py` | Burp Suite plugin for authorization bypass testing (always generated) |
 | `webaudit_burp_crypto.py` | Burp Suite plugin for decrypted traffic viewing (when crypto is detected) |
 | `site/` | Downloaded source code |
@@ -93,6 +94,23 @@ The agent follows a 12-step methodology defined in [`AGENT_PROMPT.md`](AGENT_PRO
     - Remediation recommendations
     - Library inventory with CVE cross-reference
     - All appendices (PoC suite, sniffer, Burp plugins, analyzed files)
+
+### Agent Briefing (post-processing)
+
+After the audit completes, WebAudit generates an `AGENT.md` file — an operational briefing that consolidates all intelligence gathered during static analysis into a format optimized for follow-up work:
+
+- **Target profile** — URL, domain, tech stack, analysis scope
+- **File inventory** — Application code vs libraries, with descriptions
+- **Library CVEs** — Versions and known vulnerabilities with in-use status
+- **API endpoints** — All endpoints extracted from source code
+- **Authentication pattern** — How the app handles auth (tokens, cookies, headers, storage keys)
+- **Crypto schemes** — Full documentation of any client-side encryption (algorithm, key, IV, flow, weaknesses)
+- **Findings summary** — All vulnerabilities with severity, CVSS, CWE
+- **Finding details** — Description, impact, location, remediation for each
+- **Analysis coverage** — What was completed (static) and what remains (dynamic testing)
+- **Available tooling** — Map of all generated tools and their purpose
+
+This file enables any agent, tool, or pentester to pick up where WebAudit left off — with 80% of reconnaissance already done.
 
 ## Installation
 
@@ -176,6 +194,7 @@ webaudit check
 │       │   └── jquery.min.js
 │       └── ...
 ├── CLAUDE.md                      # Code map (auto-generated)
+├── AGENT.md                       # Operational briefing for follow-up agents
 ├── webaudit_report.json           # Structured report + all tooling
 ├── webaudit_report.md             # Client-ready Markdown report
 ├── webaudit_burp_auth.py          # Burp auth bypass tester
@@ -194,6 +213,12 @@ The Markdown report includes up to 6 appendices:
 | D | Burp Authorization Analyzer — complete plugin code | Always |
 | E | Application Sniffer — real-time monitoring panel | Always |
 | F | Analyzed Files — inventory of all files reviewed | Always |
+
+## Markdown Report Features
+
+- **Local path to URL conversion** — File paths like `site/www.example.com/js/app.js` are automatically converted to live URLs in the report
+- **HTML-safe prose** — `<` and `>` characters in explanation text are escaped to prevent Markdown rendering issues, while code blocks remain untouched
+- **Resilient output handling** — Handles agent JSON variations: field name aliases (en/es), nested wrappers, lists-as-strings, dicts-as-values, CVE objects, CVSS objects
 
 ## Security Model
 

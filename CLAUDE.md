@@ -4,46 +4,70 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-WebAudit is an autonomous frontend security analysis agent built on the **Claude Agent SDK** (Python). It receives a target URL, downloads the complete site with `wget`, performs static analysis of JavaScript/HTML/CSS, and generates a professional security diagnostic report in Markdown.
+WebAudit is an autonomous frontend security analysis agent powered by Claude CLI. It receives a target URL, downloads the complete site with `wget`, performs static analysis of JavaScript/HTML/CSS, and generates a comprehensive security diagnostic with custom pentesting tools.
 
 ## Architecture
 
-- **`webaudit.py`** — Orquestador CLI. Carga config, lee el system prompt de `AGENT_PROMPT.md`, lanza el agente via `claude_agent_sdk.query()`, y guarda el informe JSON.
-- **`AGENT_PROMPT.md`** — System prompt + documentacion del operador. Define el workflow de 5 fases: Download → Reconnaissance → Security Analysis → PoC Generation → Report.
-- **`install.sh`** — Instalador: clona el repo, instala dependencias, crea symlink y config.
+- **`webaudit.py`** — CLI orchestrator. Loads config, reads system prompt from `AGENT_PROMPT.md`, launches Claude CLI (`claude -p`) with streaming output, normalizes JSON output, generates Markdown report, Burp plugins, and AGENT.md briefing.
+- **`AGENT_PROMPT.md`** — System prompt for the audit agent. Defines the 12-step methodology: Inventory → Deep Read → Grep Patterns → Library CVEs → Category Analysis → Verification → PoC Suite → Sniffer → Crypto Analysis → Burp Crypto Plugin → Burp Auth Plugin → Report JSON.
+- **`install.sh`** — Installer: clones repo, creates venv, installs deps, creates symlink and config.
 
-### Configuracion
+### Key functions in webaudit.py
 
-La API key y defaults se leen de (en orden de prioridad):
-1. Variable de entorno `ANTHROPIC_API_KEY`
+- `run_claude_streaming()` — Executes `claude -p` with `--output-format stream-json --verbose`, parses events, shows real-time progress.
+- `step_audit()` — Main audit step. Sends AUDIT_PROMPT, extracts JSON report, normalizes field names (en/es aliases), validates all outputs (PoCs, sniffer, crypto, burp plugins), saves files.
+- `_generate_markdown_report()` — Builds the full Markdown report from JSON data. Handles type coercion, HTML escaping, local-path-to-URL conversion.
+- `_generate_agent_md()` — Builds AGENT.md operational briefing from report data for follow-up agents/tools.
+- `_to_str()` — Coerces any value to markdown-safe string with `<`/`>` escaping (for prose).
+- `_to_raw_str()` — Coerces any value to string WITHOUT escaping (for code blocks).
+- `_md_escape()` — Escapes `<`/`>` in text while preserving backtick code spans.
+- `_local_path_to_url()` — Converts `site/www.example.com/path` to `https://www.example.com/path`.
+
+### Configuration
+
+API key and defaults are read from (priority order):
+1. Environment variable `ANTHROPIC_API_KEY`
 2. `~/.config/webaudit/config.yaml`
 3. `/etc/webaudit/config.yaml`
 
-## Running the Agent
+## Running
 
 ```bash
-# Instalar dependencias
 pip3 install -r requirements.txt
 
-# Uso basico
+# Basic
 python3 webaudit.py https://target.example.com
 
-# Con modelo, budget y max turns custom
-python3 webaudit.py https://target.example.com claude-opus-4-6 15.0 80
+# With options
+python3 webaudit.py scan https://target.example.com -m claude-opus-4-6 -b 15.0 -t 80 -l es
+
+# Health check
+python3 webaudit.py check
 ```
 
-## Output Format
+## Output
 
-La salida del agente es un archivo JSON (`webaudit_report.json`) con los hallazgos estructurados. Campos clave:
+The agent produces `webaudit_report.json` with structured findings. Key JSON fields:
 
-- **`hallazgos[].console_instrumentation`** — PoC JavaScript individual por hallazgo, inyectable en la consola del navegador.
-- **`console_instrumentation`** (raiz) — Suite JS completa que genera un panel/interfaz grafica en el navegador para explotar y demostrar múltiples fallas de forma interactiva. Es el campo más importante de la salida.
-- **`informe_markdown`** — Informe completo en Markdown para lectura humana.
+- **`hallazgos[]`** — Findings array, each with `console_instrumentation` (JS PoC)
+- **`console_instrumentation`** (root) — Complete PoC suite with floating panel UI
+- **`application_sniffer`** — Custom JS sniffer with persistence and nav protection
+- **`crypto_analysis`** — Crypto scheme documentation (null if no crypto found)
+- **`burp_extension`** — Burp crypto traffic viewer plugin (null if no crypto)
+- **`burp_auth_analyzer`** — Burp auth bypass tester plugin (always generated)
+
+Post-processing generates:
+- `webaudit_report.md` — Markdown report with appendices A-F
+- `webaudit_burp_auth.py` — Standalone Burp plugin file
+- `webaudit_burp_crypto.py` — Standalone Burp plugin file (if crypto detected)
+- `AGENT.md` — Operational briefing for follow-up agents
 
 ## Key Design Decisions
 
 - **Static analysis only** — no backend interaction, no active exploitation.
 - PoCs must be console-injectable JavaScript that demonstrates issues without causing real damage.
-- CVEs should only be reported if the vulnerable function is actually used in the target's code (no false positives from unused library features).
+- CVEs should only be reported if the vulnerable function is actually used in the target's code.
 - Severity ratings must be conservative and honest (CVSS v3.1).
-- The project language is **Spanish** (prompts, report output, variable names/descriptions).
+- The agent prompt language is **Spanish**; report output language is configurable (en/es).
+- JSON normalization layer handles agent output variations (field name aliases, nested wrappers, type mismatches).
+- Markdown prose escapes `<`/`>` to prevent HTML interpretation; code blocks are left raw.
