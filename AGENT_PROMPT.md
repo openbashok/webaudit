@@ -355,7 +355,84 @@ Si encontraste Web Crypto API, forge, o un esquema custom, adaptar el engine a E
 
 Si NO se detecto criptografia (`crypto_analysis` es `null`), el campo `burp_extension` debe ser `null`.
 
-### Paso 11: Informe
+### Paso 11: Burp Suite Auth Analyzer (OBLIGATORIO — siempre se genera)
+
+Genera un plugin de Burp Suite en Python (Jython) para testing de autorizacion, pre-configurado con los endpoints y patron de autenticacion que encontraste en el analisis estatico.
+
+#### 11.1 Informacion que ya tenes del analisis
+
+Del Paso 2-5 ya recolectaste:
+- **Endpoints API**: todas las URLs en fetch(), XMLHttpRequest, $.ajax, axios (ej: `/api/login`, `/api/users`, `/api/admin/config`)
+- **Patron de auth**: como la app envia credenciales (header `Authorization: Bearer ...`, cookie `session_id`, custom header `X-Token`, etc.)
+- **Rutas protegidas client-side**: rutas que el JS oculta/muestra segun permisos (ej: `if (user.role === 'admin') showAdminPanel()`)
+- **Endpoints admin/debug**: URLs que aparecen en el codigo pero que la UI no muestra a usuarios normales
+- **Tokens en storage**: keys de localStorage/sessionStorage que contienen tokens de sesion
+
+#### 11.2 Estructura del plugin
+
+```python
+from burp import IBurpExtender, ITab, IHttpListener, IContextMenuFactory
+```
+
+Componentes requeridos:
+
+1. **EndpointDB**: Lista pre-cargada de endpoints encontrados en el codigo, clasificados por:
+   - `public`: no requieren auth (login, registro, assets)
+   - `authenticated`: requieren usuario autenticado
+   - `privileged`: requieren rol admin/elevado (encontrados en checks client-side)
+   - `hidden`: endpoints en el codigo que la UI no expone directamente
+
+   ```python
+   ENDPOINTS = {
+       "public": ["/api/login", "/api/register"],
+       "authenticated": ["/api/users/me", "/api/orders"],
+       "privileged": ["/api/admin/users", "/api/admin/config", "/api/debug/logs"],
+       "hidden": ["/api/internal/metrics", "/api/v2/export"],
+   }
+   ```
+
+2. **AuthPattern**: Configuracion del patron de autenticacion detectado:
+   ```python
+   AUTH_PATTERN = {
+       "type": "bearer",          # bearer | cookie | custom_header | query_param
+       "location": "header",      # header | cookie | query | body
+       "name": "Authorization",   # nombre del header/cookie/param
+       "prefix": "Bearer ",       # prefijo (si aplica)
+       "storage_key": "auth_token",  # key en localStorage donde la app guarda el token
+   }
+   ```
+
+3. **Tab UI** ("WebAudit AuthZ"):
+   - Tabla con columnas: #, Method, Endpoint, Category, Original (status), No Auth (status), Modified Auth (status), Result
+   - Column "Result" muestra: "ENFORCED" (verde), "BYPASS!" (rojo), "PARTIAL" (naranja)
+   - Panel inferior con detalle del request/response de cada test
+   - Boton "Run All Tests" para probar todos los endpoints
+   - Boton "Test Selected" para probar uno especifico
+   - Dropdown para seleccionar categorias (all, authenticated, privileged, hidden)
+   - Campo de texto editable para poner un token de sesion alternativo (para test de IDOR/privilege escalation)
+
+4. **Test Engine**: Para cada endpoint, ejecuta 3 requests:
+   - **Original**: con la auth capturada del proxy (baseline)
+   - **No Auth**: mismo request pero removiendo el token/cookie/header de auth
+   - **Modified Auth**: mismo request con un token diferente (el del campo editable, o un token invalido/expirado)
+   - Compara los status codes y tamaño de respuesta
+   - Si No Auth retorna 200 y mismo body → **BYPASS!**
+   - Si Modified Auth retorna 200 con datos de otro user → **IDOR!**
+
+5. **IHttpListener**: Captura requests en tiempo real y los clasifica automaticamente segun la EndpointDB. Resalta los que van a endpoints privileged/hidden.
+
+6. **Context Menu**: Click derecho en cualquier request del proxy → "Send to AuthZ Tester" para testearlo manualmente.
+
+#### 11.3 Notas
+
+- El plugin debe ser **un solo archivo .py** listo para cargar en Burp
+- Debe funcionar sin configuracion — los endpoints y auth pattern ya vienen pre-cargados del analisis
+- Incluir header con instrucciones de uso
+- Los tests deben ser seguros (solo replay de GET/POST existentes, no genera payloads destructivos)
+- Manejar errores de red graciosamente (timeout, connection refused → marcar como "ERROR" en la tabla)
+- Dark theme consistente con el otro plugin
+
+### Paso 12: Informe
 
 Guarda el resultado como `webaudit_report.json` usando Write. La estructura:
 
@@ -420,7 +497,8 @@ Guarda el resultado como `webaudit_report.json` usando Write. La estructura:
     ],
     "summary": "The application uses client-side AES-CBC encryption with a hardcoded key to 'protect' login credentials. This provides zero actual security since the key is exposed in the JavaScript source."
   },
-  "burp_extension": "# -*- coding: utf-8 -*-\n# WebAudit Burp Extension ...\nfrom burp import IBurpExtender, ITab, IHttpListener\n...(complete Jython plugin code)...",
+  "burp_extension": "# -*- coding: utf-8 -*-\n# WebAudit Burp Extension - Decrypted Traffic Viewer\n...(complete Jython plugin, only if crypto detected, else null)...",
+  "burp_auth_analyzer": "# -*- coding: utf-8 -*-\n# WebAudit Burp AuthZ Analyzer\n# Pre-configured endpoints and auth pattern from static analysis\n...(complete Jython plugin, always generated)...",
   "librerias": [
     {
       "nombre": "jQuery",
@@ -471,4 +549,6 @@ El campo `informe_markdown` debe contener el informe completo legible con:
 9. **CRYPTO_ANALYSIS: ANALIZA LA CRIPTOGRAFIA.** Si la app cifra/descifra requests, tokens o datos, documenta el esquema completo (algoritmo, clave, IV, flujo, debilidades) y genera JS inyectable para observar encrypt/decrypt en tiempo real. Si no hay crypto, pon `null`.
 
 10. **BURP_EXTENSION: GENERA EL PLUGIN SI HAY CRYPTO.** Si detectaste criptografia de requests, genera un plugin de Burp Suite completo en Python/Jython que descifra el trafico en tiempo real. El plugin debe replicar el esquema crypto exacto del target. Si no hay crypto, pon `null`.
+
+11. **BURP_AUTH_ANALYZER: SIEMPRE SE GENERA.** Plugin de Burp para testing de autorizacion, pre-configurado con los endpoints y patron de auth del target. Clasifica endpoints en public/authenticated/privileged/hidden y testea bypass removiendo o modificando auth tokens.
 ```

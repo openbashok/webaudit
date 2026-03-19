@@ -59,7 +59,12 @@ INSTRUCTIONS — follow the system prompt steps in order:
     The plugin must replicate the exact crypto scheme found, create a custom tab with a
     decrypted traffic viewer (table + request/response panels), and capture traffic via
     IHttpListener. If no crypto, set "burp_extension" to null.
-13. Save webaudit_report.json with Write.
+13. ALWAYS generate "burp_auth_analyzer": a Burp plugin for authorization bypass testing.
+    Pre-load it with the API endpoints found in the code (classified as public/authenticated/
+    privileged/hidden) and the auth pattern (bearer token, cookie, custom header, etc.).
+    The plugin tests each endpoint with no auth and modified auth, showing which enforce
+    server-side authorization and which can be bypassed.
+14. Save webaudit_report.json with Write.
 
 CRITICAL: This is STATIC SOURCE CODE ANALYSIS, not a network pentest.
 Your job is to READ JavaScript code and find vulnerabilities IN THE CODE.
@@ -491,14 +496,23 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
 
         burp_ext = report_data.get("burp_extension", "")
         if burp_ext:
-            print(f"[audit] Burp extension: {len(burp_ext):,} chars")
-            burp_path = project_dir / "webaudit_burp_extension.py"
+            print(f"[audit] Burp crypto extension: {len(burp_ext):,} chars")
+            burp_path = project_dir / "webaudit_burp_crypto.py"
             burp_path.write_text(burp_ext, encoding="utf-8")
-            print(f"[audit] OK: Burp extension saved to {burp_path}")
+            print(f"[audit] OK: Burp crypto extension saved to {burp_path}")
         elif crypto and isinstance(crypto, dict) and crypto.get("detected"):
             print(f"[audit] WARN: Crypto detected but no burp_extension generated")
         else:
-            print(f"[audit] Burp extension: not generated (no crypto detected)")
+            print(f"[audit] Burp crypto extension: not generated (no crypto detected)")
+
+        burp_auth = report_data.get("burp_auth_analyzer", "")
+        if burp_auth:
+            print(f"[audit] Burp auth analyzer: {len(burp_auth):,} chars")
+            burp_auth_path = project_dir / "webaudit_burp_auth.py"
+            burp_auth_path.write_text(burp_auth, encoding="utf-8")
+            print(f"[audit] OK: Burp auth analyzer saved to {burp_auth_path}")
+        else:
+            print(f"[audit] WARN: No burp_auth_analyzer generated")
 
     # --- Generar reporte Markdown (siempre desde JSON, no del agente) ---
     if report_data:
@@ -560,12 +574,13 @@ MD_LABELS = {
         "crypto_instrumentation_instructions": "Copy and paste in the browser console to intercept encryption/decryption in real-time:",
         "crypto_files": "Files",
         "crypto_not_detected": "No client-side request encryption/decryption was detected in the application code.",
-        "appendix_burp": "Appendix C: Burp Suite Extension",
+        "appendix_burp": "Appendix C: Burp Suite — Decrypted Traffic Viewer",
         "burp_instructions": "Save the code below as a .py file and load it in Burp Suite > Extensions > Add (requires Jython). The plugin creates a custom tab that shows decrypted traffic in real-time.",
-        "burp_not_generated": "No Burp extension was generated (no client-side request encryption detected).",
-        "appendix_sniffer": "Appendix D: Application Sniffer",
+        "appendix_burp_auth": "Appendix D: Burp Suite — Authorization Analyzer",
+        "burp_auth_instructions": "Save the code below as a .py file and load it in Burp Suite > Extensions > Add (requires Jython). The plugin creates a custom tab pre-loaded with the target's endpoints to test authorization bypass. Click 'Run All Tests' to check which endpoints enforce server-side auth.",
+        "appendix_sniffer": "Appendix E: Application Sniffer",
         "sniffer_instructions": "Custom application sniffer — copy and paste in the browser console to monitor the application's behavior in real-time (variables, storage, network calls, forms, cookies):",
-        "appendix_files": "Appendix E: Analyzed Files",
+        "appendix_files": "Appendix F: Analyzed Files",
         "file_col": "File",
         "type_col": "Type",
         "lines_col": "Lines",
@@ -619,12 +634,13 @@ MD_LABELS = {
         "crypto_instrumentation_instructions": "Copiar y pegar en la consola del navegador para interceptar cifrado/descifrado en tiempo real:",
         "crypto_files": "Archivos",
         "crypto_not_detected": "No se detecto cifrado/descifrado de requests del lado del cliente en el codigo de la aplicacion.",
-        "appendix_burp": "Apendice C: Extension de Burp Suite",
+        "appendix_burp": "Apendice C: Burp Suite — Visor de Trafico Descifrado",
         "burp_instructions": "Guardar el codigo de abajo como archivo .py y cargarlo en Burp Suite > Extensions > Add (requiere Jython). El plugin crea una pestania custom que muestra el trafico descifrado en tiempo real.",
-        "burp_not_generated": "No se genero extension de Burp (no se detecto cifrado de requests del lado del cliente).",
-        "appendix_sniffer": "Apendice D: Sniffer Aplicativo",
+        "appendix_burp_auth": "Apendice D: Burp Suite — Analizador de Autorizacion",
+        "burp_auth_instructions": "Guardar el codigo de abajo como archivo .py y cargarlo en Burp Suite > Extensions > Add (requiere Jython). El plugin crea una pestania pre-cargada con los endpoints del target para testear bypass de autorizacion. Click en 'Run All Tests' para verificar cuales endpoints aplican auth del lado del servidor.",
+        "appendix_sniffer": "Apendice E: Sniffer Aplicativo",
         "sniffer_instructions": "Sniffer personalizado de la aplicacion — copiar y pegar en la consola del navegador para monitorear en tiempo real el comportamiento de la aplicacion (variables, storage, llamadas de red, formularios, cookies):",
-        "appendix_files": "Apendice E: Archivos Analizados",
+        "appendix_files": "Apendice F: Archivos Analizados",
         "file_col": "Archivo",
         "type_col": "Tipo",
         "lines_col": "Lineas",
@@ -903,6 +919,20 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
         lines.append("")
         lines.append("```python")
         lines.append(burp_ext)
+        lines.append("```")
+        lines.append("")
+
+    # Burp Auth Analyzer
+    burp_auth = data.get("burp_auth_analyzer", "")
+    if burp_auth:
+        lines.append("---")
+        lines.append("")
+        lines.append(f"## {L['appendix_burp_auth']}")
+        lines.append("")
+        lines.append(L['burp_auth_instructions'])
+        lines.append("")
+        lines.append("```python")
+        lines.append(burp_auth)
         lines.append("```")
         lines.append("")
 
