@@ -711,6 +711,23 @@ def _local_path_to_url(path: str, target_url: str) -> str:
     return f"{scheme}://{domain_part}/{rest}"
 
 
+def _to_str(val) -> str:
+    """Coerce any value to a markdown-safe string. Lists become bullet points, dicts become JSON."""
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        return val
+    if isinstance(val, list):
+        return "\n".join(f"- {_to_str(item)}" for item in val)
+    if isinstance(val, dict):
+        # Try to render key-value pairs
+        parts = []
+        for k, v in val.items():
+            parts.append(f"**{k}:** {_to_str(v)}")
+        return "\n".join(parts)
+    return str(val)
+
+
 def _generate_markdown_report(data: dict, lang: str = "en") -> str:
     """Genera un informe Markdown completo desde los datos JSON del reporte."""
     L = MD_LABELS.get(lang, MD_LABELS["en"])
@@ -743,7 +760,7 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
     if resumen:
         lines.append(f"## {L['executive_summary']}")
         lines.append("")
-        lines.append(resumen)
+        lines.append(_to_str(resumen))
         lines.append("")
 
     # Tabla de hallazgos
@@ -756,7 +773,10 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
         for h in hallazgos:
             titulo = h.get("titulo", h.get("title", "?"))
             sev = h.get("severidad", h.get("severity", "?"))
-            lines.append(f"| {h.get('id', '?')} | {titulo} | **{sev}** | {h.get('cvss_v3_1', '?')} | {h.get('cwe', '?')} |")
+            cvss_val = h.get('cvss_v3_1', '?')
+            if isinstance(cvss_val, dict):
+                cvss_val = cvss_val.get('score', cvss_val.get('base_score', '?'))
+            lines.append(f"| {h.get('id', '?')} | {titulo} | **{sev}** | {cvss_val} | {h.get('cwe', '?')} |")
         lines.append("")
 
         # Detalle de cada hallazgo
@@ -768,7 +788,10 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
             lines.append(f"## {L['finding']} {h.get('id', '?')}: {titulo}")
             lines.append("")
             lines.append(f"**{L['severity']}:** {sev}")
-            lines.append(f"**CVSS v3.1:** {h.get('cvss_v3_1', '?')}")
+            cvss_val = h.get('cvss_v3_1', '?')
+            if isinstance(cvss_val, dict):
+                cvss_val = cvss_val.get('score', cvss_val.get('base_score', str(cvss_val)))
+            lines.append(f"**CVSS v3.1:** {cvss_val}")
             lines.append(f"**CWE:** {h.get('cwe', '?')}")
             lines.append("")
 
@@ -776,14 +799,14 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
             if desc:
                 lines.append(f"### {L['description']}")
                 lines.append("")
-                lines.append(desc)
+                lines.append(_to_str(desc))
                 lines.append("")
 
             impacto = h.get("impacto", h.get("impact", ""))
             if impacto:
                 lines.append(f"### {L['impact']}")
                 lines.append("")
-                lines.append(impacto)
+                lines.append(_to_str(impacto))
                 lines.append("")
 
             evidencia = h.get("evidencia", h.get("evidence", {}))
@@ -791,11 +814,11 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
                 lines.append(f"### {L['evidence']}")
                 lines.append("")
                 if isinstance(evidencia, dict):
-                    archivo_raw = evidencia.get("archivo", evidencia.get("file", "?"))
+                    archivo_raw = str(evidencia.get("archivo", evidencia.get("file", "?")))
                     archivo = _local_path_to_url(archivo_raw, url) if archivo_raw.startswith(("site/", "./site/")) else archivo_raw
                     linea = evidencia.get("linea", evidencia.get("line", "?"))
-                    codigo = evidencia.get("codigo", evidencia.get("code", ""))
-                    contexto = evidencia.get("contexto", evidencia.get("context", ""))
+                    codigo = _to_str(evidencia.get("codigo", evidencia.get("code", "")))
+                    contexto = _to_str(evidencia.get("contexto", evidencia.get("context", "")))
                     lines.append(f"**{L['file']}:** `{archivo}` ({L['line']} {linea})")
                     lines.append("")
                     if codigo:
@@ -806,6 +829,10 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
                     if contexto:
                         lines.append(f"**{L['context']}:** {contexto}")
                         lines.append("")
+                elif isinstance(evidencia, list):
+                    for ev in evidencia:
+                        lines.append(_to_str(ev))
+                        lines.append("")
                 else:
                     lines.append(str(evidencia))
                     lines.append("")
@@ -814,7 +841,7 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
             if pasos:
                 lines.append(f"### {L['reproduction_steps']}")
                 lines.append("")
-                lines.append(pasos)
+                lines.append(_to_str(pasos))
                 lines.append("")
 
             if h.get("console_instrumentation"):
@@ -823,7 +850,7 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
                 lines.append(L['poc_instructions'])
                 lines.append("")
                 lines.append("```javascript")
-                lines.append(h["console_instrumentation"])
+                lines.append(_to_str(h["console_instrumentation"]))
                 lines.append("```")
                 lines.append("")
 
@@ -831,7 +858,7 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
             if recom:
                 lines.append(f"### {L['recommendations']}")
                 lines.append("")
-                lines.append(recom)
+                lines.append(_to_str(recom))
                 lines.append("")
 
     # Analisis criptografico
@@ -874,14 +901,14 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
             ]:
                 val = scheme.get(field, "")
                 if val:
-                    lines.append(f"**{L[label_key]}:** {val}")
+                    lines.append(f"**{L[label_key]}:** {_to_str(val)}")
                     lines.append("")
 
             flow = scheme.get("flow", "")
             if flow:
                 lines.append(f"**{L['crypto_flow']}:**")
                 lines.append("")
-                lines.append(flow)
+                lines.append(_to_str(flow))
                 lines.append("")
 
             weaknesses = scheme.get("weaknesses", [])
@@ -889,12 +916,12 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
                 lines.append(f"**{L['crypto_weaknesses']}:**")
                 lines.append("")
                 for w in weaknesses:
-                    lines.append(f"- {w}")
+                    lines.append(f"- {_to_str(w)}")
                 lines.append("")
 
             impact = scheme.get("impact", "")
             if impact:
-                lines.append(f"**{L['crypto_impact']}:** {impact}")
+                lines.append(f"**{L['crypto_impact']}:** {_to_str(impact)}")
                 lines.append("")
 
             ci = scheme.get("console_instrumentation", "")
