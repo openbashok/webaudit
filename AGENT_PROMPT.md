@@ -432,9 +432,26 @@ Componentes requeridos:
 - Manejar errores de red graciosamente (timeout, connection refused → marcar como "ERROR" en la tabla)
 - Dark theme consistente con el otro plugin
 
-### Paso 12: Informe
+### Paso 12: Guardar artefactos y reporte
 
-Guarda el resultado como `webaudit_report.json` usando Write. La estructura:
+IMPORTANTE: Para evitar exceder limites de tokens, guarda los artefactos grandes como archivos SEPARADOS ANTES de escribir el JSON final.
+
+#### 12.1 Escribir archivos grandes primero (un Write por archivo):
+
+1. **`webaudit_suite.js`** — Suite completa de PoCs (panel flotante con botones para cada PoC)
+2. **`webaudit_sniffer.js`** — Sniffer personalizado de la aplicacion
+3. **`webaudit_burp_crypto.py`** — Plugin Burp de trafico descifrado (SOLO si hay crypto, sino omitir)
+4. **`webaudit_burp_auth.py`** — Plugin Burp de auth analyzer (SIEMPRE)
+
+#### 12.2 Escribir `webaudit_report.json` (JSON liviano):
+
+En el JSON, los campos de artefactos grandes usan referencias cortas:
+- `"console_instrumentation": "see webaudit_suite.js"`
+- `"application_sniffer": "see webaudit_sniffer.js"`
+- `"burp_extension": "see webaudit_burp_crypto.py"` (o `null` si no hay crypto)
+- `"burp_auth_analyzer": "see webaudit_burp_auth.py"`
+
+Los demas campos van completos en el JSON:
 
 ```json
 {
@@ -470,11 +487,11 @@ Guarda el resultado como `webaudit_report.json` usando Write. La estructura:
       },
       "pasos_reproduccion": "1. Abrir DevTools\n2. ...",
       "recomendaciones": "...",
-      "console_instrumentation": "(function(){ /* PoC JS inyectable en consola */ })();"
+      "console_instrumentation": "(function(){ /* PoC JS inyectable en consola — ESTE SI VA INLINE, son chicos */ })();"
     }
   ],
-  "console_instrumentation": "(function(){ /* Suite completa: panel inyectable con todos los PoCs */ })();",
-  "application_sniffer": "(function(){ /* Sniffer personalizado: panel flotante que monitorea variables, storage, fetch, forms, etc. especificos de esta app */ })();",
+  "console_instrumentation": "see webaudit_suite.js",
+  "application_sniffer": "see webaudit_sniffer.js",
   "crypto_analysis": {
     "detected": true,
     "schemes": [
@@ -482,51 +499,25 @@ Guarda el resultado como `webaudit_report.json` usando Write. La estructura:
         "name": "AES-CBC encryption of login requests",
         "files": ["site/js/crypto-utils.js", "site/js/login.js"],
         "algorithm": "AES-CBC",
-        "key_source": "Hardcoded in config.js line 15: var encKey = 'MySecretKey12345'",
-        "iv": "Fixed IV: '0000000000000000' (16 null bytes)",
-        "what_is_encrypted": "Login credentials (username + password) before POST to /api/auth",
-        "flow": "1. User submits login form\n2. login.js:34 calls encryptData(JSON.stringify({user, pass}))\n3. crypto-utils.js:12 encrypts with CryptoJS.AES.encrypt(data, key, {iv: iv, mode: CryptoJS.mode.CBC})\n4. Result is base64-encoded and sent as POST body field 'payload'\n5. Server presumably decrypts with same key",
-        "weaknesses": [
-          "Key hardcoded in client-side JavaScript — anyone can extract it",
-          "Fixed IV defeats CBC semantic security — identical plaintexts produce identical ciphertexts",
-          "No authentication (CBC without HMAC) — vulnerable to padding oracle and bit-flipping attacks"
-        ],
-        "impact": "An attacker can: decrypt any captured login request, forge valid encrypted requests, perform replay attacks",
-        "console_instrumentation": "(function(){ /* JS that hooks CryptoJS.AES.encrypt/decrypt showing plaintext, key, IV, ciphertext */ })();"
+        "key_source": "Hardcoded in config.js line 15",
+        "iv": "Fixed IV: 16 null bytes",
+        "what_is_encrypted": "Login credentials before POST to /api/auth",
+        "flow": "1. User submits login form\n2. ...",
+        "weaknesses": ["Key hardcoded in JS", "Fixed IV", "No HMAC"],
+        "impact": "Attacker can decrypt/forge requests",
+        "console_instrumentation": "(function(){ /* Crypto hook — ESTE SI VA INLINE */ })();"
       }
     ],
-    "summary": "The application uses client-side AES-CBC encryption with a hardcoded key to 'protect' login credentials. This provides zero actual security since the key is exposed in the JavaScript source."
+    "summary": "..."
   },
-  "burp_extension": "# -*- coding: utf-8 -*-\n# WebAudit Burp Extension - Decrypted Traffic Viewer\n...(complete Jython plugin, only if crypto detected, else null)...",
-  "burp_auth_analyzer": "# -*- coding: utf-8 -*-\n# WebAudit Burp AuthZ Analyzer\n# Pre-configured endpoints and auth pattern from static analysis\n...(complete Jython plugin, always generated)...",
-  "librerias": [
-    {
-      "nombre": "jQuery",
-      "version": "3.3.1",
-      "archivo": "site/js/jquery.min.js",
-      "cves": ["CVE-2019-11358"],
-      "funciones_afectadas_en_uso": false,
-      "nota": "jQuery.extend presente pero no se usa con objetos de input externo"
-    }
-  ],
-  "archivos_analizados": [
-    {
-      "archivo": "site/js/login.js",
-      "tipo": "propio",
-      "lineas": 250,
-      "descripcion": "Logica de autenticacion y cifrado"
-    }
-  ],
-  "informe_markdown": "# Diagnostico de Seguridad Frontend...\n..."
+  "burp_extension": "see webaudit_burp_crypto.py",
+  "burp_auth_analyzer": "see webaudit_burp_auth.py",
+  "librerias": [...],
+  "archivos_analizados": [...]
 }
 ```
 
-El campo `informe_markdown` debe contener el informe completo legible con:
-- Resumen ejecutivo
-- Tabla de hallazgos
-- Detalle de cada hallazgo (descripcion, impacto, evidencia con codigo, PoC, recomendacion)
-- Apendice de librerias
-- Apendice de archivos analizados
+El post-procesador de WebAudit se encarga de leer los archivos separados y mergearlos para generar el informe Markdown completo.
 
 ## REGLAS CRITICAS
 
@@ -551,4 +542,6 @@ El campo `informe_markdown` debe contener el informe completo legible con:
 10. **BURP_EXTENSION: GENERA EL PLUGIN SI HAY CRYPTO.** Si detectaste criptografia de requests, genera un plugin de Burp Suite completo en Python/Jython que descifra el trafico en tiempo real. El plugin debe replicar el esquema crypto exacto del target. Si no hay crypto, pon `null`.
 
 11. **BURP_AUTH_ANALYZER: SIEMPRE SE GENERA.** Plugin de Burp para testing de autorizacion, pre-configurado con los endpoints y patron de auth del target. Clasifica endpoints en public/authenticated/privileged/hidden y testea bypass removiendo o modificando auth tokens.
+
+12. **ESCRIBE ARTEFACTOS COMO ARCHIVOS SEPARADOS.** Para evitar exceder limites de tokens, escribe primero los archivos grandes (webaudit_suite.js, webaudit_sniffer.js, webaudit_burp_auth.py, webaudit_burp_crypto.py) con Write individual, y DESPUES escribi el webaudit_report.json con referencias cortas ("see filename") en esos campos. Los PoCs individuales de cada hallazgo SI van inline en el JSON (son chicos).
 ```

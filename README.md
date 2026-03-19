@@ -195,8 +195,10 @@ webaudit check
 │       └── ...
 ├── CLAUDE.md                      # Code map (auto-generated)
 ├── AGENT.md                       # Operational briefing for follow-up agents
-├── webaudit_report.json           # Structured report + all tooling
+├── webaudit_report.json           # Structured report (findings, crypto, stats)
 ├── webaudit_report.md             # Client-ready Markdown report
+├── webaudit_suite.js              # PoC suite (floating panel with all PoCs)
+├── webaudit_sniffer.js            # Custom application sniffer
 ├── webaudit_burp_auth.py          # Burp auth bypass tester
 └── webaudit_burp_crypto.py        # Burp traffic decryptor (if crypto found)
 ```

@@ -44,27 +44,30 @@ INSTRUCTIONS — follow the system prompt steps in order:
 6. For libraries with detected versions, search CVEs with WebSearch and verify if affected functions are used.
 7. Verify each potential finding — re-read the context before confirming.
 8. For EACH finding, generate a functional JavaScript PoC in the "console_instrumentation" field.
-9. Generate the complete suite in the root "console_instrumentation" field.
-10. Generate the "application_sniffer" field: a CUSTOM JavaScript sniffer tailored to THIS app.
-    Based on the variables, APIs, storage keys, and functions you found in the code, create
-    a self-contained IIFE that when pasted in the browser console shows a floating panel
-    monitoring in real-time: global variables, localStorage/sessionStorage, cookies, fetch/XHR,
-    form submissions, postMessage. Only hook what THIS app actually uses — not generic.
-11. If the app encrypts/decrypts requests or data (CryptoJS, Web Crypto API, forge, custom XOR, etc.),
-    generate "crypto_analysis" with: detected schemes, algorithm, key source, IV, full flow,
-    weaknesses, impact, and console_instrumentation JS to hook encrypt/decrypt in real-time.
-    If no crypto found, set "crypto_analysis" to null.
-12. If crypto_analysis.detected is true, generate "burp_extension": a complete Python/Jython
-    Burp Suite plugin (.py file) that decrypts the app's traffic in real-time inside Burp.
-    The plugin must replicate the exact crypto scheme found, create a custom tab with a
-    decrypted traffic viewer (table + request/response panels), and capture traffic via
-    IHttpListener. If no crypto, set "burp_extension" to null.
-13. ALWAYS generate "burp_auth_analyzer": a Burp plugin for authorization bypass testing.
-    Pre-load it with the API endpoints found in the code (classified as public/authenticated/
-    privileged/hidden) and the auth pattern (bearer token, cookie, custom header, etc.).
-    The plugin tests each endpoint with no auth and modified auth, showing which enforce
-    server-side authorization and which can be bypassed.
-14. Save webaudit_report.json with Write.
+9. Generate the complete PoC suite JS.
+10. Generate the application sniffer JS (custom for this app).
+11. Analyze crypto if present.
+12. Generate Burp crypto plugin if crypto detected.
+13. ALWAYS generate Burp auth analyzer plugin.
+
+=== IMPORTANT: WRITE ARTIFACTS AS SEPARATE FILES ===
+
+To avoid exceeding output limits, write large artifacts as SEPARATE files BEFORE
+writing the final JSON report. Use Write for each:
+
+14. Write "webaudit_suite.js" — the complete PoC suite (floating panel with all PoCs).
+15. Write "webaudit_sniffer.js" — the custom application sniffer.
+16. If crypto detected, Write "webaudit_burp_crypto.py" — the Burp crypto traffic viewer plugin.
+17. ALWAYS Write "webaudit_burp_auth.py" — the Burp auth analyzer plugin.
+18. Write "webaudit_report.json" — the structured report. In this JSON:
+    - "console_instrumentation" (root): set to "see webaudit_suite.js"
+    - "application_sniffer": set to "see webaudit_sniffer.js"
+    - "burp_extension": set to "see webaudit_burp_crypto.py" (or null if no crypto)
+    - "burp_auth_analyzer": set to "see webaudit_burp_auth.py"
+    - All other fields (hallazgos, librerias, crypto_analysis, estadisticas, etc.) go in the JSON normally.
+    - Each finding's "console_instrumentation" stays inline in the JSON (these are small).
+
+This way each Write call is manageable and nothing exceeds token limits.
 
 CRITICAL: This is STATIC SOURCE CODE ANALYSIS, not a network pentest.
 Your job is to READ JavaScript code and find vulnerabilities IN THE CODE.
@@ -79,9 +82,8 @@ vulnerability. Do not leave this field empty or omit it. The PoC must:
 - Have comments explaining what it does and what it demonstrates
 - Minimum example: (function(){{ console.log('[PoC] Token found:', localStorage.getItem('token')); }})();
 
-Also, the "console_instrumentation" field at the JSON ROOT must contain a
-COMPLETE SUITE: a single JS block that when pasted in the console creates a
-floating panel on the page with buttons to execute each PoC individually.
+The PoC suite (webaudit_suite.js) must be a single JS block that when pasted
+in the console creates a floating panel with buttons to execute each PoC individually.
 """
 
 # --- Configuracion -----------------------------------------------------------
@@ -413,6 +415,10 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
     lang_name = LANG_NAMES.get(lang, "English")
     user_prompt = AUDIT_PROMPT.format(url=url, lang_name=lang_name)
 
+    # Asegurar max output tokens alto (el JSON del reporte puede superar 80K chars)
+    if not os.environ.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS"):
+        os.environ["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = "128000"
+
     # Comando claude con system prompt, modelo, budget
     claude_cmd = [
         claude_bin,
@@ -424,6 +430,7 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
     ]
 
     dbg(f"Comando: claude -p '...' --model {model} --max-budget-usd {budget}", debug)
+    dbg(f"CLAUDE_CODE_MAX_OUTPUT_TOKENS={os.environ.get('CLAUDE_CODE_MAX_OUTPUT_TOKENS')}", debug)
     print(f"[audit] Ejecutando analisis de seguridad ...")
 
     returncode, output = run_claude_streaming(claude_cmd, str(project_dir), "audit", debug, timeout=600)
@@ -491,6 +498,30 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
             if en_key in report_data and es_key not in report_data:
                 report_data[es_key] = report_data[en_key]
 
+    # --- Merge separate artifact files into report_data ---
+    # The agent writes large artifacts as separate files to avoid token limits.
+    # Read them back and merge into report_data for Markdown generation.
+    if report_data:
+        _ARTIFACT_FILES = {
+            "console_instrumentation": "webaudit_suite.js",
+            "application_sniffer": "webaudit_sniffer.js",
+            "burp_extension": "webaudit_burp_crypto.py",
+            "burp_auth_analyzer": "webaudit_burp_auth.py",
+        }
+        for field, filename in _ARTIFACT_FILES.items():
+            fpath = project_dir / filename
+            current_val = report_data.get(field, "")
+            # If the JSON field is a placeholder reference or empty, read from file
+            is_placeholder = isinstance(current_val, str) and (
+                current_val.startswith("see ") or current_val.startswith("See ") or
+                len(current_val) < 50
+            )
+            if fpath.is_file() and (is_placeholder or not current_val):
+                content = fpath.read_text(encoding="utf-8").strip()
+                if content:
+                    report_data[field] = content
+                    print(f"[audit] Merged {filename} into report ({len(content):,} chars)")
+
     # --- Validar y reportar PoCs ---
     if report_data:
         hallazgos = report_data.get("hallazgos", [])
@@ -500,10 +531,10 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
         suite = report_data.get("console_instrumentation", "")
 
         print(f"[audit] Hallazgos: {total} total, {con_poc} con PoC, {sin_poc} sin PoC")
-        if suite:
+        if suite and len(suite) > 50:
             print(f"[audit] Suite de instrumentacion: {len(suite):,} chars")
         else:
-            print(f"[audit] WARN: No se genero suite de instrumentacion (campo console_instrumentation raiz)")
+            print(f"[audit] WARN: No se genero suite de instrumentacion")
 
         if sin_poc > 0:
             print(f"[audit] WARN: {sin_poc} hallazgos sin console_instrumentation:")
@@ -512,7 +543,7 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
                     print(f"         - #{h.get('id', '?')}: {h.get('titulo', '?')}")
 
         sniffer = report_data.get("application_sniffer", "")
-        if sniffer:
+        if sniffer and len(sniffer) > 50:
             print(f"[audit] Application sniffer: {len(sniffer):,} chars")
         else:
             print(f"[audit] WARN: No se genero application_sniffer")
@@ -526,23 +557,24 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
         else:
             print(f"[audit] Crypto analysis: present but no schemes detected")
 
+        # Save Burp plugins as standalone files (if not already written by agent)
         burp_ext = report_data.get("burp_extension", "")
-        if burp_ext:
-            print(f"[audit] Burp crypto extension: {len(burp_ext):,} chars")
+        if burp_ext and len(burp_ext) > 50:
             burp_path = project_dir / "webaudit_burp_crypto.py"
-            burp_path.write_text(burp_ext, encoding="utf-8")
-            print(f"[audit] OK: Burp crypto extension saved to {burp_path}")
+            if not burp_path.is_file():
+                burp_path.write_text(burp_ext, encoding="utf-8")
+            print(f"[audit] Burp crypto extension: {len(burp_ext):,} chars")
         elif crypto and isinstance(crypto, dict) and crypto.get("detected"):
             print(f"[audit] WARN: Crypto detected but no burp_extension generated")
         else:
             print(f"[audit] Burp crypto extension: not generated (no crypto detected)")
 
         burp_auth = report_data.get("burp_auth_analyzer", "")
-        if burp_auth:
-            print(f"[audit] Burp auth analyzer: {len(burp_auth):,} chars")
+        if burp_auth and len(burp_auth) > 50:
             burp_auth_path = project_dir / "webaudit_burp_auth.py"
-            burp_auth_path.write_text(burp_auth, encoding="utf-8")
-            print(f"[audit] OK: Burp auth analyzer saved to {burp_auth_path}")
+            if not burp_auth_path.is_file():
+                burp_auth_path.write_text(burp_auth, encoding="utf-8")
+            print(f"[audit] Burp auth analyzer: {len(burp_auth):,} chars")
         else:
             print(f"[audit] WARN: No burp_auth_analyzer generated")
 
