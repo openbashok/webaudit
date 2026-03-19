@@ -1,8 +1,10 @@
 # WebAudit
 
-Autonomous frontend security analysis agent powered by Claude. WebAudit downloads a target website, performs deep static analysis of its JavaScript/HTML source code, and generates a comprehensive security diagnostic with actionable tooling for pentesters.
+Autonomous frontend security reconnaissance agent powered by Claude. WebAudit downloads a target website, performs deep static analysis of its JavaScript/HTML source code, and produces two things: a professional security diagnostic, and a **custom toolkit** — a set of purpose-built tools tailored to the specific target, ready for the analyst to use in the dynamic testing phase.
 
-**This is not a generic vulnerability scanner.** WebAudit reads every line of application JavaScript, understands data flows, identifies real vulnerabilities in context, and generates custom exploitation tools tailored to each target.
+**The core idea:** a tool that generates tools. WebAudit reads every line of application JavaScript, maps the attack surface (endpoints, auth patterns, crypto schemes, data flows), identifies real vulnerabilities in context, and then turns that intelligence into ready-to-use instruments — Burp Suite plugins pre-loaded with the target's endpoints, console-injectable PoCs, a runtime sniffer tuned to the app's specific variables and APIs, and an operational briefing for follow-up work. The analyst receives not just a report, but an entire reconnaissance package.
+
+**This is not a generic vulnerability scanner.** Every artifact WebAudit generates is specific to the target — the Burp auth tester knows which endpoints exist and how the app authenticates, the recon plugin has the full URL map, the sniffer hooks the exact global variables found in the code, and the PoC suite targets confirmed vulnerabilities with file and line references.
 
 ## How It Works
 
@@ -14,22 +16,38 @@ WebAudit runs a 3-step pipeline:
 
 1. **Download** — `wget` mirrors the complete site (HTML, JS, CSS, images)
 2. **Reconnaissance** — Claude analyzes the downloaded structure and generates a code map (`/init`)
-3. **Deep Audit** — Claude reads every JS file line by line, searches for vulnerability patterns, and generates the full report with all tooling
+3. **Deep Audit** — Claude reads every JS file line by line, maps the attack surface, identifies vulnerabilities, and generates the full report with all tooling
 
 The entire audit runs autonomously. No interaction required.
 
 ## What It Produces
 
-Each audit generates a project directory with:
+Each audit generates a project directory with two categories of output:
+
+### Report & Intelligence
 
 | File | Description |
 |------|-------------|
-| `webaudit_report.json` | Structured findings with evidence, PoCs, and all generated tooling |
+| `webaudit_report.json` | Structured findings with evidence, PoCs, and metadata |
 | `webaudit_report.md` | Professional Markdown report ready for client delivery |
-| `AGENT.md` | Operational briefing for follow-up agents or complementary tools |
-| `webaudit_burp_auth.py` | Burp Suite plugin for authorization bypass testing (always generated) |
-| `webaudit_burp_recon.py` | Burp Suite plugin for active reconnaissance of discovered endpoints (always generated) |
-| `webaudit_burp_crypto.py` | Burp Suite plugin for decrypted traffic viewing (when crypto is detected) |
+| `AGENT.md` | Operational briefing — structured context for follow-up agents or complementary tools |
+
+### Generated Toolkit
+
+| File | Description |
+|------|-------------|
+| `webaudit_suite.js` | Console-injectable PoC suite with floating panel to execute each PoC selectively |
+| `webaudit_sniffer.js` | Custom runtime sniffer — monitors the app's specific variables, APIs, storage, and network calls in real-time |
+| `webaudit_burp_auth.py` | Burp plugin: authorization bypass tester, pre-loaded with the target's endpoints and auth pattern |
+| `webaudit_burp_recon.py` | Burp plugin: active reconnaissance, probes all discovered endpoints through Burp's proxy |
+| `webaudit_burp_crypto.py` | Burp plugin: decrypted traffic viewer, replicates the target's exact encryption scheme (only when crypto is detected) |
+
+Every tool in the toolkit is **generated from the intelligence gathered during static analysis** — not from templates. This means the analyst starts the dynamic testing phase with reconnaissance already done and instruments already calibrated to the target.
+
+### Supporting Files
+
+| File | Description |
+|------|-------------|
 | `site/` | Downloaded source code |
 | `CLAUDE.md` | Code map from reconnaissance phase |
 
@@ -46,7 +64,7 @@ The agent follows a 13-step methodology defined in [`AGENT_PROMPT.md`](AGENT_PRO
 5. **Category Analysis** — Evaluate findings across 8 security categories: Cryptography, Authentication/Session, Access Control, Injection (XSS), Data Exposure, Dependencies, CSRF, and Others
 6. **Verification** — Re-read code context for each finding before confirming. No false positives.
 
-### Tooling Generation (Steps 7-11)
+### Tooling Generation (Steps 7-12)
 
 7. **Proof of Concept Suite** — JavaScript PoCs for each finding, plus a complete injectable suite with a floating panel to execute PoCs selectively from the browser console
 
@@ -90,10 +108,13 @@ The agent follows a 13-step methodology defined in [`AGENT_PROMPT.md`](AGENT_PRO
     - Loads all endpoints and URLs discovered during static analysis into an EndpointDB
     - Classifies endpoints as: `public`, `authenticated`, `privileged`, `hidden`
     - Probes endpoints through Burp's proxy with configurable auth tokens
+    - Builds requests with appropriate methods, headers, and placeholder parameters
     - Color-coded response analysis (200=green, 301/302=yellow, 401/403=orange, 404=grey, 500=red)
+    - Detects interesting responses: 200 without auth, JSON with data, unexpected behaviors
     - Real-time traffic classification via `IHttpListener`
     - Context menu: right-click any proxy request → "Send to Active Recon"
     - CSV export of results
+    - Complements the Authorization Analyzer: **Recon discovers and probes, AuthZ tests authorization**
 
 ### Report (Step 13)
 
@@ -120,7 +141,7 @@ After the audit completes, WebAudit generates an `AGENT.md` file — an operatio
 - **Analysis coverage** — What was completed (static) and what remains (dynamic testing)
 - **Available tooling** — Map of all generated tools and their purpose
 
-This file enables any agent, tool, or pentester to pick up where WebAudit left off — with 80% of reconnaissance already done.
+This file enables any agent, tool, or pentester to pick up where WebAudit left off — with the reconnaissance phase already done and a custom toolkit ready to use.
 
 ## Installation
 
@@ -239,6 +260,7 @@ The Markdown report includes up to 7 appendices:
 - **Static analysis only** — no backend interaction, no active exploitation
 - PoCs demonstrate vulnerabilities without causing damage
 - Burp plugins perform safe replay testing (no destructive payloads)
+- Active Recon plugin sends only safe probes (GET for reads, POST with test-only data, no attack payloads)
 - Conservative severity ratings with honest CVSS v3.1 scoring
 - Findings verified in context before reporting (no false positives from pattern matching)
 
