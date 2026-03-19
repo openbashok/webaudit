@@ -711,12 +711,24 @@ def _local_path_to_url(path: str, target_url: str) -> str:
     return f"{scheme}://{domain_part}/{rest}"
 
 
+def _md_escape(text: str) -> str:
+    """Escape < and > in prose text so Markdown renderers don't interpret them as HTML tags.
+    Does NOT touch content inside backtick code spans."""
+    # Split by backtick-delimited spans to preserve code
+    parts = re.split(r'(`[^`]*`)', text)
+    for i, part in enumerate(parts):
+        if not part.startswith('`'):
+            parts[i] = part.replace('<', '&lt;').replace('>', '&gt;')
+    return ''.join(parts)
+
+
 def _to_str(val) -> str:
-    """Coerce any value to a markdown-safe string. Lists become bullet points, dicts become JSON."""
+    """Coerce any value to a markdown-safe string. Lists become bullet points, dicts become JSON.
+    Escapes < and > in prose to prevent Markdown/HTML rendering issues."""
     if val is None:
         return ""
     if isinstance(val, str):
-        return val
+        return _md_escape(val)
     if isinstance(val, list):
         return "\n".join(f"- {_to_str(item)}" for item in val)
     if isinstance(val, dict):
@@ -725,6 +737,19 @@ def _to_str(val) -> str:
         for k, v in val.items():
             parts.append(f"**{k}:** {_to_str(v)}")
         return "\n".join(parts)
+    return _md_escape(str(val))
+
+
+def _to_raw_str(val) -> str:
+    """Coerce any value to string WITHOUT HTML escaping. Use for content inside code blocks."""
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        return val
+    if isinstance(val, list):
+        return "\n".join(_to_raw_str(item) for item in val)
+    if isinstance(val, dict):
+        return json.dumps(val, indent=2, ensure_ascii=False)
     return str(val)
 
 
@@ -817,7 +842,7 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
                     archivo_raw = str(evidencia.get("archivo", evidencia.get("file", "?")))
                     archivo = _local_path_to_url(archivo_raw, url) if archivo_raw.startswith(("site/", "./site/")) else archivo_raw
                     linea = evidencia.get("linea", evidencia.get("line", "?"))
-                    codigo = _to_str(evidencia.get("codigo", evidencia.get("code", "")))
+                    codigo = _to_raw_str(evidencia.get("codigo", evidencia.get("code", "")))
                     contexto = _to_str(evidencia.get("contexto", evidencia.get("context", "")))
                     lines.append(f"**{L['file']}:** `{archivo}` ({L['line']} {linea})")
                     lines.append("")
@@ -850,7 +875,7 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
                 lines.append(L['poc_instructions'])
                 lines.append("")
                 lines.append("```javascript")
-                lines.append(_to_str(h["console_instrumentation"]))
+                lines.append(_to_raw_str(h["console_instrumentation"]))
                 lines.append("```")
                 lines.append("")
 
