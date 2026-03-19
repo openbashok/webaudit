@@ -432,24 +432,105 @@ Componentes requeridos:
 - Manejar errores de red graciosamente (timeout, connection refused → marcar como "ERROR" en la tabla)
 - Dark theme consistente con el otro plugin
 
-### Paso 12: Guardar artefactos y reporte
+### Paso 12: Burp Suite Active Recon (OBLIGATORIO — siempre se genera)
+
+Genera un plugin de Burp Suite en Python (Jython) para reconocimiento activo, pre-configurado con TODA la inteligencia del analisis estatico. Este plugin le ahorra al pentester horas de trabajo manual al automatizar las primeras pruebas dinamicas basandose en lo que ya sabemos del codigo.
+
+#### 12.1 Informacion que ya tenes del analisis
+
+Del analisis estatico ya recolectaste:
+- **Todos los endpoints** con sus metodos HTTP (GET/POST) y parametros
+- **Parametros interesantes**: IDs (userId, orderId), tokens, campos que van a innerHTML, campos hidden
+- **Endpoints ocultos/admin**: URLs en el JS que la UI no expone
+- **Formularios**: action URLs, campos, methods
+- **Auth pattern**: como se autentica la app
+
+#### 12.2 Estructura del plugin
+
+```python
+from burp import IBurpExtender, ITab, IHttpListener, IContextMenuFactory
+```
+
+Componentes requeridos:
+
+1. **EndpointDB**: Lista completa pre-cargada con TODOS los endpoints encontrados en el codigo:
+
+   ```python
+   ENDPOINTS = [
+       {"method": "POST", "path": "/api/login", "params": ["username", "password"], "category": "public", "notes": "Login form"},
+       {"method": "GET", "path": "/api/users/me", "params": [], "category": "authenticated", "notes": "Current user profile"},
+       {"method": "GET", "path": "/api/admin/users", "params": ["page", "limit"], "category": "privileged", "notes": "Hidden in admin.js:45"},
+       {"method": "POST", "path": "/api/export", "params": ["format", "ids"], "category": "hidden", "notes": "Not exposed in UI"},
+   ]
+   ```
+
+2. **Target Config**: Dominio, base URL, auth pattern:
+   ```python
+   TARGET = {
+       "domain": "apps.example.com",
+       "base_url": "https://apps.example.com",
+       "auth_pattern": {"type": "bearer", "header": "Authorization", "prefix": "Bearer "},
+   }
+   ```
+
+3. **Tab UI** ("WebAudit Recon"):
+   - Tabla con columnas: #, Method, Endpoint, Category, Params, Status, Size, Notes
+   - Panel inferior: request/response detail para el endpoint seleccionado
+   - Boton **"Probe All"**: Envia un request a CADA endpoint de la EndpointDB por el proxy de Burp (usa `makeHttpRequest`). Esto popula el sitemap de Burp con todos los endpoints descubiertos en el codigo, incluso los que el usuario nunca visitaria manualmente.
+   - Boton **"Probe Hidden Only"**: Solo envia requests a endpoints `privileged` y `hidden`
+   - Boton **"Probe Selected"**: Envia request al endpoint seleccionado
+   - Dropdown de categoria (all, public, authenticated, privileged, hidden)
+   - Campo de texto para auth token (se usa en todos los requests)
+   - Checkbox **"Follow redirects"**
+   - La tabla se actualiza con los resultados (status code, response size, tiempo de respuesta)
+   - Color coding: 200=verde, 301/302=amarillo, 401/403=naranja, 404=gris, 500=rojo
+
+4. **Request Builder**: Para cada endpoint de la EndpointDB:
+   - Construye el request HTTP completo (method, path, headers, body)
+   - Agrega el auth token del campo de texto al header correspondiente
+   - Para POST: construye body con los parametros (con valores placeholder razonables, ej: `username=test&password=test`)
+   - Agrega headers standard: Content-Type, User-Agent, Accept
+
+5. **Response Analyzer**: Al recibir la respuesta de cada probe:
+   - Registra: status code, content-length, content-type, tiempo de respuesta
+   - Detecta: redirects (a login?), error pages, JSON responses, HTML responses
+   - Marca endpoints interesantes: los que responden 200 sin auth, los que devuelven JSON con datos, los que responden diferente de lo esperado
+
+6. **IHttpListener**: Captura requests en tiempo real que van al dominio del target y los clasifica automaticamente contra la EndpointDB. Resalta endpoints no vistos antes.
+
+7. **Context Menu**: Click derecho en cualquier request del proxy → "Send to Active Recon" para analizarlo contra la EndpointDB.
+
+8. **Export**: Boton para exportar resultados como CSV (endpoint, method, status, size, category, notes).
+
+#### 13.3 Notas
+
+- Un solo archivo .py listo para cargar en Burp
+- Los requests son seguros: GET para lecturas, POST solo con datos de test inofensivos
+- NO envia payloads de ataque (no SQLi, no XSS) — solo reconnaissance
+- Manejar errores de red graciosamente
+- Dark theme consistente con los otros plugins
+- El plugin COMPLEMENTA al Auth Analyzer: Recon descubre y sondea, AuthZ testea autorizacion
+
+### Paso 13: Guardar artefactos y reporte
 
 IMPORTANTE: Para evitar exceder limites de tokens, guarda los artefactos grandes como archivos SEPARADOS ANTES de escribir el JSON final.
 
-#### 12.1 Escribir archivos grandes primero (un Write por archivo):
+#### 13.1 Escribir archivos grandes primero (un Write por archivo):
 
 1. **`webaudit_suite.js`** — Suite completa de PoCs (panel flotante con botones para cada PoC)
 2. **`webaudit_sniffer.js`** — Sniffer personalizado de la aplicacion
 3. **`webaudit_burp_crypto.py`** — Plugin Burp de trafico descifrado (SOLO si hay crypto, sino omitir)
 4. **`webaudit_burp_auth.py`** — Plugin Burp de auth analyzer (SIEMPRE)
+5. **`webaudit_burp_recon.py`** — Plugin Burp de Active Recon (SIEMPRE)
 
-#### 12.2 Escribir `webaudit_report.json` (JSON liviano):
+#### 13.2 Escribir `webaudit_report.json` (JSON liviano):
 
 En el JSON, los campos de artefactos grandes usan referencias cortas:
 - `"console_instrumentation": "see webaudit_suite.js"`
 - `"application_sniffer": "see webaudit_sniffer.js"`
 - `"burp_extension": "see webaudit_burp_crypto.py"` (o `null` si no hay crypto)
 - `"burp_auth_analyzer": "see webaudit_burp_auth.py"`
+- `"burp_active_recon": "see webaudit_burp_recon.py"`
 
 Los demas campos van completos en el JSON:
 
@@ -512,6 +593,7 @@ Los demas campos van completos en el JSON:
   },
   "burp_extension": "see webaudit_burp_crypto.py",
   "burp_auth_analyzer": "see webaudit_burp_auth.py",
+  "burp_active_recon": "see webaudit_burp_recon.py",
   "librerias": [...],
   "archivos_analizados": [...]
 }
@@ -543,5 +625,7 @@ El post-procesador de WebAudit se encarga de leer los archivos separados y merge
 
 11. **BURP_AUTH_ANALYZER: SIEMPRE SE GENERA.** Plugin de Burp para testing de autorizacion, pre-configurado con los endpoints y patron de auth del target. Clasifica endpoints en public/authenticated/privileged/hidden y testea bypass removiendo o modificando auth tokens.
 
-12. **ESCRIBE ARTEFACTOS COMO ARCHIVOS SEPARADOS.** Para evitar exceder limites de tokens, escribe primero los archivos grandes (webaudit_suite.js, webaudit_sniffer.js, webaudit_burp_auth.py, webaudit_burp_crypto.py) con Write individual, y DESPUES escribi el webaudit_report.json con referencias cortas ("see filename") en esos campos. Los PoCs individuales de cada hallazgo SI van inline en el JSON (son chicos).
+12. **BURP_ACTIVE_RECON: SIEMPRE SE GENERA.** Plugin de Burp para reconnaissance activa. Carga todos los endpoints y URLs descubiertos durante el analisis estatico, permite sondearlos a traves del proxy de Burp, y clasifica las respuestas. Complementa al Auth Analyzer: Recon descubre y sondea, AuthZ testea autorizacion.
+
+13. **ESCRIBE ARTEFACTOS COMO ARCHIVOS SEPARADOS.** Para evitar exceder limites de tokens, escribe primero los archivos grandes (webaudit_suite.js, webaudit_sniffer.js, webaudit_burp_auth.py, webaudit_burp_crypto.py, webaudit_burp_recon.py) con Write individual, y DESPUES escribi el webaudit_report.json con referencias cortas ("see filename") en esos campos. Los PoCs individuales de cada hallazgo SI van inline en el JSON (son chicos).
 ```

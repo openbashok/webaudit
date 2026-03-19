@@ -49,21 +49,24 @@ INSTRUCTIONS — follow the system prompt steps in order:
 11. Analyze crypto if present.
 12. Generate Burp crypto plugin if crypto detected.
 13. ALWAYS generate Burp auth analyzer plugin.
+14. ALWAYS generate Burp active recon plugin (loads all endpoints/URLs discovered during analysis).
 
 === IMPORTANT: WRITE ARTIFACTS AS SEPARATE FILES ===
 
 To avoid exceeding output limits, write large artifacts as SEPARATE files BEFORE
 writing the final JSON report. Use Write for each:
 
-14. Write "webaudit_suite.js" — the complete PoC suite (floating panel with all PoCs).
-15. Write "webaudit_sniffer.js" — the custom application sniffer.
-16. If crypto detected, Write "webaudit_burp_crypto.py" — the Burp crypto traffic viewer plugin.
-17. ALWAYS Write "webaudit_burp_auth.py" — the Burp auth analyzer plugin.
-18. Write "webaudit_report.json" — the structured report. In this JSON:
+15. Write "webaudit_suite.js" — the complete PoC suite (floating panel with all PoCs).
+16. Write "webaudit_sniffer.js" — the custom application sniffer.
+17. If crypto detected, Write "webaudit_burp_crypto.py" — the Burp crypto traffic viewer plugin.
+18. ALWAYS Write "webaudit_burp_auth.py" — the Burp auth analyzer plugin.
+19. ALWAYS Write "webaudit_burp_recon.py" — the Burp active recon plugin.
+20. Write "webaudit_report.json" — the structured report. In this JSON:
     - "console_instrumentation" (root): set to "see webaudit_suite.js"
     - "application_sniffer": set to "see webaudit_sniffer.js"
     - "burp_extension": set to "see webaudit_burp_crypto.py" (or null if no crypto)
     - "burp_auth_analyzer": set to "see webaudit_burp_auth.py"
+    - "burp_active_recon": set to "see webaudit_burp_recon.py"
     - All other fields (hallazgos, librerias, crypto_analysis, estadisticas, etc.) go in the JSON normally.
     - Each finding's "console_instrumentation" stays inline in the JSON (these are small).
 
@@ -507,6 +510,7 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
             "application_sniffer": "webaudit_sniffer.js",
             "burp_extension": "webaudit_burp_crypto.py",
             "burp_auth_analyzer": "webaudit_burp_auth.py",
+            "burp_active_recon": "webaudit_burp_recon.py",
         }
         for field, filename in _ARTIFACT_FILES.items():
             fpath = project_dir / filename
@@ -577,6 +581,15 @@ def step_audit(url: str, model: str, budget: float, max_turns: int,
             print(f"[audit] Burp auth analyzer: {len(burp_auth):,} chars")
         else:
             print(f"[audit] WARN: No burp_auth_analyzer generated")
+
+        burp_recon = report_data.get("burp_active_recon", "")
+        if burp_recon and len(burp_recon) > 50:
+            burp_recon_path = project_dir / "webaudit_burp_recon.py"
+            if not burp_recon_path.is_file():
+                burp_recon_path.write_text(burp_recon, encoding="utf-8")
+            print(f"[audit] Burp active recon: {len(burp_recon):,} chars")
+        else:
+            print(f"[audit] WARN: No burp_active_recon generated")
 
     # --- Generar reporte Markdown (siempre desde JSON, no del agente) ---
     if report_data:
@@ -649,9 +662,11 @@ MD_LABELS = {
         "burp_instructions": "Save the code below as a .py file and load it in Burp Suite > Extensions > Add (requires Jython). The plugin creates a custom tab that shows decrypted traffic in real-time.",
         "appendix_burp_auth": "Appendix D: Burp Suite — Authorization Analyzer",
         "burp_auth_instructions": "Save the code below as a .py file and load it in Burp Suite > Extensions > Add (requires Jython). The plugin creates a custom tab pre-loaded with the target's endpoints to test authorization bypass. Click 'Run All Tests' to check which endpoints enforce server-side auth.",
-        "appendix_sniffer": "Appendix E: Application Sniffer",
+        "appendix_burp_recon": "Appendix E: Burp Suite — Active Recon",
+        "burp_recon_instructions": "Save the code below as a .py file and load it in Burp Suite > Extensions > Add (requires Jython). The plugin loads all endpoints and URLs discovered during static analysis, probes them through Burp's proxy, and classifies responses. Complements the Authorization Analyzer: Recon discovers and probes, AuthZ tests authorization.",
+        "appendix_sniffer": "Appendix F: Application Sniffer",
         "sniffer_instructions": "Custom application sniffer — copy and paste in the browser console to monitor the application's behavior in real-time (variables, storage, network calls, forms, cookies):",
-        "appendix_files": "Appendix F: Analyzed Files",
+        "appendix_files": "Appendix G: Analyzed Files",
         "file_col": "File",
         "type_col": "Type",
         "lines_col": "Lines",
@@ -709,9 +724,11 @@ MD_LABELS = {
         "burp_instructions": "Guardar el codigo de abajo como archivo .py y cargarlo en Burp Suite > Extensions > Add (requiere Jython). El plugin crea una pestania custom que muestra el trafico descifrado en tiempo real.",
         "appendix_burp_auth": "Apendice D: Burp Suite — Analizador de Autorizacion",
         "burp_auth_instructions": "Guardar el codigo de abajo como archivo .py y cargarlo en Burp Suite > Extensions > Add (requiere Jython). El plugin crea una pestania pre-cargada con los endpoints del target para testear bypass de autorizacion. Click en 'Run All Tests' para verificar cuales endpoints aplican auth del lado del servidor.",
-        "appendix_sniffer": "Apendice E: Sniffer Aplicativo",
+        "appendix_burp_recon": "Apendice E: Burp Suite — Reconnaissance Activa",
+        "burp_recon_instructions": "Guardar el codigo de abajo como archivo .py y cargarlo en Burp Suite > Extensions > Add (requiere Jython). El plugin carga todos los endpoints y URLs descubiertos durante el analisis estatico, los sondea a traves del proxy de Burp y clasifica las respuestas. Complementa al Auth Analyzer: Recon descubre y sondea, AuthZ testea autorizacion.",
+        "appendix_sniffer": "Apendice F: Sniffer Aplicativo",
         "sniffer_instructions": "Sniffer personalizado de la aplicacion — copiar y pegar en la consola del navegador para monitorear en tiempo real el comportamiento de la aplicacion (variables, storage, llamadas de red, formularios, cookies):",
-        "appendix_files": "Apendice F: Archivos Analizados",
+        "appendix_files": "Apendice G: Archivos Analizados",
         "file_col": "Archivo",
         "type_col": "Tipo",
         "lines_col": "Lineas",
@@ -1059,6 +1076,20 @@ def _generate_markdown_report(data: dict, lang: str = "en") -> str:
         lines.append("```")
         lines.append("")
 
+    # Burp Active Recon
+    burp_recon = data.get("burp_active_recon", "")
+    if burp_recon:
+        lines.append("---")
+        lines.append("")
+        lines.append(f"## {L['appendix_burp_recon']}")
+        lines.append("")
+        lines.append(L['burp_recon_instructions'])
+        lines.append("")
+        lines.append("```python")
+        lines.append(burp_recon)
+        lines.append("```")
+        lines.append("")
+
     # Application Sniffer
     sniffer = data.get("application_sniffer", "")
     if sniffer:
@@ -1352,6 +1383,7 @@ def _generate_agent_md(data: dict) -> str:
     lines.append("| `webaudit_report.json` | Full structured report with all findings and code |")
     lines.append("| `webaudit_report.md` | Human-readable Markdown report |")
     lines.append("| `webaudit_burp_auth.py` | Burp plugin: authorization bypass tester (pre-loaded with endpoints) |")
+    lines.append("| `webaudit_burp_recon.py` | Burp plugin: active recon of discovered endpoints and URLs |")
     if crypto and isinstance(crypto, dict) and crypto.get("detected"):
         lines.append("| `webaudit_burp_crypto.py` | Burp plugin: decrypted traffic viewer (replicates target's crypto) |")
     lines.append("| JSON field `console_instrumentation` | PoC suite — paste in browser console |")

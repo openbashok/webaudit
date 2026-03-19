@@ -28,13 +28,14 @@ Each audit generates a project directory with:
 | `webaudit_report.md` | Professional Markdown report ready for client delivery |
 | `AGENT.md` | Operational briefing for follow-up agents or complementary tools |
 | `webaudit_burp_auth.py` | Burp Suite plugin for authorization bypass testing (always generated) |
+| `webaudit_burp_recon.py` | Burp Suite plugin for active reconnaissance of discovered endpoints (always generated) |
 | `webaudit_burp_crypto.py` | Burp Suite plugin for decrypted traffic viewing (when crypto is detected) |
 | `site/` | Downloaded source code |
 | `CLAUDE.md` | Code map from reconnaissance phase |
 
 ## Analysis Methodology
 
-The agent follows a 12-step methodology defined in [`AGENT_PROMPT.md`](AGENT_PROMPT.md):
+The agent follows a 13-step methodology defined in [`AGENT_PROMPT.md`](AGENT_PROMPT.md):
 
 ### Source Code Analysis (Steps 1-6)
 
@@ -85,9 +86,18 @@ The agent follows a 12-step methodology defined in [`AGENT_PROMPT.md`](AGENT_PRO
     - Results table showing: **ENFORCED** (green), **BYPASS!** (red), **IDOR!** (red)
     - Context menu integration: right-click any proxy request → "Send to AuthZ Tester"
 
-### Report (Step 12)
+12. **Burp Suite — Active Recon** (always generated) — Complete Jython plugin that:
+    - Loads all endpoints and URLs discovered during static analysis into an EndpointDB
+    - Classifies endpoints as: `public`, `authenticated`, `privileged`, `hidden`
+    - Probes endpoints through Burp's proxy with configurable auth tokens
+    - Color-coded response analysis (200=green, 301/302=yellow, 401/403=orange, 404=grey, 500=red)
+    - Real-time traffic classification via `IHttpListener`
+    - Context menu: right-click any proxy request → "Send to Active Recon"
+    - CSV export of results
 
-12. **Structured Report** — JSON + Markdown with:
+### Report (Step 13)
+
+13. **Structured Report** — JSON + Markdown with:
     - Executive summary
     - Findings with CVSS v3.1 scores, CWE IDs, evidence (file, line, code, context)
     - Reproduction steps
@@ -200,12 +210,13 @@ webaudit check
 ├── webaudit_suite.js              # PoC suite (floating panel with all PoCs)
 ├── webaudit_sniffer.js            # Custom application sniffer
 ├── webaudit_burp_auth.py          # Burp auth bypass tester
+├── webaudit_burp_recon.py         # Burp active recon of discovered endpoints
 └── webaudit_burp_crypto.py        # Burp traffic decryptor (if crypto found)
 ```
 
 ## Report Appendices
 
-The Markdown report includes up to 6 appendices:
+The Markdown report includes up to 7 appendices:
 
 | Appendix | Content | Generated |
 |----------|---------|-----------|
@@ -213,8 +224,9 @@ The Markdown report includes up to 6 appendices:
 | B | Instrumentation Suite — floating panel with all PoCs | Always |
 | C | Burp Decrypted Traffic Viewer — complete plugin code | If crypto detected |
 | D | Burp Authorization Analyzer — complete plugin code | Always |
-| E | Application Sniffer — real-time monitoring panel | Always |
-| F | Analyzed Files — inventory of all files reviewed | Always |
+| E | Burp Active Recon — endpoint discovery and probing plugin | Always |
+| F | Application Sniffer — real-time monitoring panel | Always |
+| G | Analyzed Files — inventory of all files reviewed | Always |
 
 ## Markdown Report Features
 
